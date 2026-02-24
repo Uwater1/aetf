@@ -125,7 +125,7 @@ def download_stock_data(input_file):
             
             rs = bs.query_history_k_data_plus(bs_code,
                 "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
-                start_date='2015-12-30', end_date='2026-01-23',
+                start_date='2015-1-1', end_date='2026-01-24',
                 frequency="d", adjustflag="2")
             
             if rs.error_code != '0':
