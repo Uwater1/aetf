@@ -44,7 +44,7 @@ def load_adj_close_series(folder):
     return series, meta
 
 
-def find_correlated_groups(series, threshold=0.999):
+def find_correlated_groups(series, threshold=0.995):
     """Find groups of ETFs with pairwise correlation > threshold."""
     names = list(series.keys())
     n = len(names)
@@ -99,11 +99,11 @@ def find_correlated_groups(series, threshold=0.999):
 
 def pick_best(group, meta):
     """Pick the best ETF from a correlated group.
-    Priority: higher total return, then higher last day volume.
+    Priority: longer history (num_rows), then higher last day volume.
     """
     ranked = sorted(
         group,
-        key=lambda name: (meta[name]['total_return'], meta[name]['last_volume']),
+        key=lambda name: (meta[name]['num_rows'], meta[name]['last_volume']),
         reverse=True,
     )
     return ranked[0], ranked[1:]  # best, rest
@@ -123,7 +123,7 @@ def main():
     series, meta = load_adj_close_series(selected_dir)
 
     # 2. Find correlated groups
-    multi_groups, singletons, pairs = find_correlated_groups(series, threshold=0.999)
+    multi_groups, singletons, pairs = find_correlated_groups(series, threshold=0.995)
 
     # 3. Print correlated groups for review
     print("\n=== Correlated Groups ===")
@@ -135,7 +135,7 @@ def main():
         for name in group:
             m = meta[name]
             marker = " ★ BEST" if name == best else ""
-            print(f"  {name:50s} return={m['total_return']:+.2%}  vol={m['last_volume']:>12,.0f}{marker}")
+            print(f"  {name:50s} days={m['num_rows']}  vol={m['last_volume']:>12,.0f}{marker}")
 
     # 4. Move best from each group + all singletons to selected2
     to_move = best_names + singletons
