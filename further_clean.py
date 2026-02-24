@@ -97,16 +97,54 @@ def find_correlated_groups(series, threshold=0.995):
     return multi_groups, singletons, pairs
 
 
-def pick_best(group, meta):
+def pick_best(group, meta, series):
     """Pick the best ETF from a correlated group.
-    Priority: longer history (num_rows), then higher last day volume.
+    Logic:
+    1. Find the YOUNGEST ETF in the group to get the 'benchmark date'.
+    2. Calculate returns for ALL members starting FROM that benchmark date.
+    3. Select the member with the highest return since that date.
+    4. Tiebreaker: higher last-day volume.
     """
+    # 1. Identify youngest
+    youngest_name = min(group, key=lambda n: meta[n]['num_rows'])
+    benchmark_date = series[youngest_name].index.min()
+    
+    # 2. Calculate returns since benchmark date
+    group_stats = []
+    for name in group:
+        s = series[name]
+        # Get price on or immediately after benchmark date
+        prices_after = s[s.index >= benchmark_date]
+        if prices_after.empty:
+            bench_return = -999
+        else:
+            first_p = prices_after.iloc[0]
+            last_p = prices_after.iloc[-1]
+            bench_return = (last_p / first_p - 1) if first_p != 0 else 0
+            
+        group_stats.append({
+            'name': name,
+            'bench_return': bench_return,
+            'vol': meta[name]['last_volume'],
+            'total_rows': meta[name]['num_rows']
+        })
+
+    # 3. Sort by bench_return (desc), then vol (desc)
     ranked = sorted(
-        group,
-        key=lambda name: (meta[name]['num_rows'], meta[name]['last_volume']),
-        reverse=True,
+        group_stats,
+        key=lambda x: (x['bench_return'], x['vol']),
+        reverse=True
     )
-    return ranked[0], ranked[1:]  # best, rest
+    
+    best_name = ranked[0]['name']
+    others = [r['name'] for r in ranked[1:]]
+    
+    # Store aligned metrics for display in main
+    for item in group_stats:
+        meta[item['name']]['bench_return'] = item['bench_return']
+        meta[item['name']]['bench_date'] = benchmark_date.strftime('%Y-%m-%d')
+
+    return best_name, others
 
 
 def main():
@@ -123,19 +161,19 @@ def main():
     series, meta = load_adj_close_series(selected_dir)
 
     # 2. Find correlated groups
-    multi_groups, singletons, pairs = find_correlated_groups(series, threshold=0.995)
+    multi_groups, singletons, pairs = find_correlated_groups(series, threshold=0.998)
 
     # 3. Print correlated groups for review
     print("\n=== Correlated Groups ===")
     best_names = []
     for i, (root, group) in enumerate(multi_groups.items(), 1):
-        best, rest = pick_best(group, meta)
+        best, rest = pick_best(group, meta, series)
         best_names.append(best)
-        print(f"\nGroup {i} ({len(group)} ETFs):")
+        print(f"\nGroup {i} ({len(group)} ETFs, Benchmark Date: {meta[best]['bench_date']}):")
         for name in group:
             m = meta[name]
             marker = " ★ BEST" if name == best else ""
-            print(f"  {name:50s} days={m['num_rows']}  vol={m['last_volume']:>12,.0f}{marker}")
+            print(f"  {name:50s} bench_ret={m['bench_return']:+.2%}  rows={m['num_rows']}  vol={m['last_volume']:>12,.0f}{marker}")
 
     # 4. Move best from each group + all singletons to selected2
     to_move = best_names + singletons
