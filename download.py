@@ -124,9 +124,9 @@ def download_stock_data(input_file):
             print(f"[{idx+1}/{len(df)}] Downloading {bs_code} ({name}) to {filename}...")
             
             rs = bs.query_history_k_data_plus(bs_code,
-                "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
+                "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,peTTM,pbMRQ,psTTM,pcfNcfTTM",
                 start_date='2015-1-1', end_date='2026-01-24',
-                frequency="d", adjustflag="2")
+                frequency="d", adjustflag="1")
             
             if rs.error_code != '0':
                 print(f'Error querying {bs_code}: {rs.error_msg}')
