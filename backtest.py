@@ -48,6 +48,23 @@ VOL_LOOKBACK = 60                   # Rolling window for volatility scaling
 SIGNAL_STRENGTH = 0.4               # Blend: 0=equal weight, 1=full alpha model
 REBALANCE_MONTHS = [2, 5, 8, 11]    # Feb, May, Aug, Nov
 
+# Alt weights: proportional to AdjustedSharpe from etf_evaluation.csv, normalized to sum=1.
+# Higher Sharpe → larger allocation. Range: ~7.5% (lowest) to ~12.3% (highest).
+_ADJ_SHARPE = {
+    '矿业ETF_561330':          1.2548,
+    '浙商之江凤凰ETF_512190':  1.1718,
+    '工程机械ETF_560280':      1.1620,
+    '电信ETF易方达_563010':    1.1351,
+    '半导体设备ETF_561980':    1.0942,
+    '中证2000ETF华夏_562660':  1.0520,
+    '石油ETF_561360':          0.8943,
+    '银行ETF华夏_515020':      0.8776,
+    '沪港深500ETF富国_517100': 0.8129,
+    '中证500ETF国联_515550':   0.7624,
+}
+_total_sharpe = sum(_ADJ_SHARPE.values())
+ALT_WEIGHTS = {name: v / _total_sharpe for name, v in _ADJ_SHARPE.items()}
+
 
 def load_all_data(etf_names):
     """Load adj_close for all ETFs into a single DataFrame, aligned by date."""
@@ -84,17 +101,25 @@ def get_rebalance_dates(dates, months):
     return rebalance_dates
 
 
-def compute_alpha_weights(prices, rebalance_date):
+def compute_alpha_weights(prices, rebalance_date, base_weights=None):
     """
     Compute portfolio weights using:
       1. Multi-timeframe Z-score value signal (blended 50/120/200-day MAs)
       2. Inverse-volatility scaling (risk parity adjustment)
       3. Adaptive momentum guard (per-ETF, k × rolling_std threshold)
+
+    base_weights: dict of {etf_name: weight} to use as the blend anchor and
+                  momentum guard reference. Defaults to equal weight when None.
     """
     idx = prices.index.get_loc(rebalance_date)
     etf_names = prices.columns.tolist()
     n = len(etf_names)
-    equal_w = 1.0 / n
+
+    # Use provided base weights or fall back to equal weight
+    if base_weights is None:
+        base_w = {name: 1.0 / n for name in etf_names}
+    else:
+        base_w = base_weights
 
     # --- Blended Z-score value signal across multiple MA timeframes ---
     value_scores = {}
@@ -134,9 +159,9 @@ def compute_alpha_weights(prices, rebalance_date):
     total_combined = sum(combined.values())
     alpha_weights = {name: combined[name] / total_combined for name in etf_names}
 
-    # --- Blend alpha weights with equal-weight (controls conviction) ---
+    # --- Blend alpha weights with base weights (controls conviction) ---
     raw_weights = {
-        name: SIGNAL_STRENGTH * alpha_weights[name] + (1 - SIGNAL_STRENGTH) * equal_w
+        name: SIGNAL_STRENGTH * alpha_weights[name] + (1 - SIGNAL_STRENGTH) * base_w[name]
         for name in etf_names
     }
 
@@ -153,8 +178,8 @@ def compute_alpha_weights(prices, rebalance_date):
         dn_thresh = -MOMENTUM_K * ret_std
 
         if mom > up_thresh:
-            # Strong rally (relative to this ETF's vol): keep riding
-            w = max(w, equal_w)
+            # Strong rally (relative to this ETF's vol): keep riding, at least base weight
+            w = max(w, base_w[name])
         elif mom < dn_thresh:
             # Strong crash (relative to this ETF's vol): avoid catching knife
             w = min(w, MIN_WEIGHT)
@@ -170,13 +195,16 @@ def compute_alpha_weights(prices, rebalance_date):
     return weights, value_scores, momentum
 
 
-def run_backtest(prices, rf_daily, rebalance_dates, override_weights=None):
+def run_backtest(prices, rf_daily, rebalance_dates, override_weights=None, base_weights=None):
     """
     Run the backtest:
     - At each rebalance date, compute alpha weights (or use override_weights)
     - Between rebalances, drift with market returns
     - Track portfolio NAV daily
-    
+
+    override_weights: if set, skip alpha model and use this fixed weight dict every rebalance.
+    base_weights: if set (and override_weights is None), use as base for alpha model blending.
+
     Returns: nav Series, weight_history list
     """
     etf_names = prices.columns.tolist()
@@ -192,7 +220,7 @@ def run_backtest(prices, rf_daily, rebalance_dates, override_weights=None):
     if override_weights:
         current_weights = override_weights.copy()
     else:
-        current_weights, _, _ = compute_alpha_weights(prices, rebalance_dates[0])
+        current_weights, _, _ = compute_alpha_weights(prices, rebalance_dates[0], base_weights)
 
     weight_history.append({'date': rebalance_dates[0], 'weights': current_weights.copy()})
 
@@ -208,7 +236,7 @@ def run_backtest(prices, rf_daily, rebalance_dates, override_weights=None):
             if override_weights:
                 current_weights = override_weights.copy()
             else:
-                current_weights, _, _ = compute_alpha_weights(prices, date)
+                current_weights, _, _ = compute_alpha_weights(prices, date, base_weights)
             holdings = {name: nav * current_weights[name] for name in etf_names}
             weight_history.append({'date': date, 'weights': current_weights.copy()})
 
@@ -265,39 +293,46 @@ def compute_metrics(nav_series, rf_daily):
     }
 
 
-def print_results(alpha_nav, equal_nav, bench_nav, weight_history, rf_daily):
-    """Print performance comparison and weight history."""
-    alpha_m = compute_metrics(alpha_nav, rf_daily)
-    equal_m = compute_metrics(equal_nav, rf_daily)
-    bench_m = compute_metrics(bench_nav, rf_daily)
+def print_results(equalw_nav, alpha_nav, altw_nav, altw_alpha_nav, bench_nav,
+                  alpha_wh, altw_alpha_wh, rf_daily):
+    """Print 4-strategy performance comparison and weight history."""
+    eq_m  = compute_metrics(equalw_nav,     rf_daily)
+    al_m  = compute_metrics(alpha_nav,      rf_daily)
+    aw_m  = compute_metrics(altw_nav,       rf_daily)
+    aa_m  = compute_metrics(altw_alpha_nav, rf_daily)
+    bn_m  = compute_metrics(bench_nav,      rf_daily)
 
-    print("\n" + "=" * 70)
-    print("  PERFORMANCE COMPARISON")
-    print("=" * 70)
-    print(f"\n{'Metric':<20} {'Alpha Model':>15} {'Equal Weight':>15} {'CSI300 BM':>15}")
-    print("-" * 65)
-    for key in alpha_m:
-        print(f"{key:<20} {alpha_m[key]:>15} {equal_m[key]:>15} {bench_m[key]:>15}")
+    COL = 13
+    print("\n" + "=" * 80)
+    print("  PERFORMANCE COMPARISON  (4 strategies + CSI300 benchmark)")
+    print("=" * 80)
+    print(f"\n{'Metric':<20} {'EqualW':>{COL}} {'EqualW+Alpha':>{COL}} {'AltW':>{COL}} {'AltW+Alpha':>{COL}} {'CSI300':>{COL}}")
+    print("-" * 80)
+    for key in eq_m:
+        print(f"{key:<20} {eq_m[key]:>{COL}} {al_m[key]:>{COL}} {aw_m[key]:>{COL}} {aa_m[key]:>{COL}} {bn_m[key]:>{COL}}")
 
-    # Compact weight history: one line per rebalance, show top 3 and bottom 3
-    print("\n" + "=" * 70)
-    print("  WEIGHT ALLOCATION AT EACH REBALANCE")
-    print("=" * 70)
+    # Compact weight history for alpha strategies
     etf_short = {n: n.split('_')[0][:6] for n in PORTFOLIO_ETFS}
-    for entry in weight_history:
-        date = entry['date']
-        weights = entry['weights']
-        sorted_w = sorted(weights.items(), key=lambda x: x[1], reverse=True)
-        top3 = ', '.join(f'{etf_short[n]}={w:.0%}' for n, w in sorted_w[:3])
-        bot3 = ', '.join(f'{etf_short[n]}={w:.0%}' for n, w in sorted_w[-3:])
-        spread = sorted_w[0][1] - sorted_w[-1][1]
-        print(f"  {date.date()} | Top: {top3} | Bot: {bot3} | Spread: {spread:.1%}")
+    for label, wh in [('EqualW+Alpha', alpha_wh), ('AltW+Alpha', altw_alpha_wh)]:
+        print(f"\n{'=' * 80}")
+        print(f"  WEIGHT ALLOCATION — {label}")
+        print("=" * 80)
+        for entry in wh:
+            date = entry['date']
+            weights = entry['weights']
+            sorted_w = sorted(weights.items(), key=lambda x: x[1], reverse=True)
+            top3 = ', '.join(f'{etf_short[n]}={w:.0%}' for n, w in sorted_w[:3])
+            bot3 = ', '.join(f'{etf_short[n]}={w:.0%}' for n, w in sorted_w[-3:])
+            spread = sorted_w[0][1] - sorted_w[-1][1]
+            print(f"  {date.date()} | Top: {top3} | Bot: {bot3} | Spread: {spread:.1%}")
 
-    # Save NAV comparison to CSV
+    # Save all 4 NAV series to CSV
     nav_compare = pd.DataFrame({
-        'alpha_nav': alpha_nav,
-        'equal_nav': equal_nav,
-        'benchmark_nav': bench_nav,
+        'equalw_nav':      equalw_nav,
+        'equalw_alpha_nav': alpha_nav,
+        'altw_nav':        altw_nav,
+        'altw_alpha_nav':  altw_alpha_nav,
+        'benchmark_nav':   bench_nav,
     })
     output_path = os.path.join(BASE_DIR, 'backtest_results.csv')
     nav_compare.to_csv(output_path)
@@ -316,7 +351,7 @@ def load_benchmark(dates):
 
 
 def main():
-    print("  Portfolio Backtest — Value Alpha + Momentum Guard")
+    print("  Portfolio Backtest — 4 Strategies")
 
     # 1. Load data
     print("\n[1] Loading ETF data...")
@@ -327,27 +362,31 @@ def main():
 
     # 2. Find rebalance dates
     rebalance_dates = get_rebalance_dates(prices.index, REBALANCE_MONTHS)
-#    print(f"\n[2] Rebalance dates ({len(rebalance_dates)}):")
-#    for d in rebalance_dates:
-#        print(f"    {d.date()}")
 
-    # 3. Run alpha backtest
-#    print("\n[3] Running alpha model backtest...")
-    alpha_nav, weight_history = run_backtest(prices, rf_daily, rebalance_dates)
-
-    # 4. Run equal-weight benchmark
-#    print("\n[4] Running equal-weight benchmark...")
+    # 3. Strategy 1: Equal weight (static, no alpha rebalance)
     equal_weights = {name: 1.0 / len(PORTFOLIO_ETFS) for name in PORTFOLIO_ETFS}
-    equal_nav, _ = run_backtest(prices, rf_daily, rebalance_dates, 
-                                override_weights=equal_weights)
+    equalw_nav, _ = run_backtest(prices, rf_daily, rebalance_dates,
+                                 override_weights=equal_weights)
 
-    # 5. Load CSI300 benchmark
-#    print("\n[5] Loading CSI300 benchmark (沪深300ETF易方达)...")
-    bench_nav = load_benchmark(alpha_nav.index)
+    # 4. Strategy 2: Equal weight + alpha rebalance
+    alpha_nav, alpha_wh = run_backtest(prices, rf_daily, rebalance_dates)
 
-    # 6. Print results
-    print_results(alpha_nav, equal_nav, bench_nav, weight_history, rf_daily)
+    # 5. Strategy 3: Alt weight (static AdjustedSharpe-proportional, no alpha rebalance)
+    altw_nav, _ = run_backtest(prices, rf_daily, rebalance_dates,
+                               override_weights=ALT_WEIGHTS)
+
+    # 6. Strategy 4: Alt weight + alpha rebalance
+    altw_alpha_nav, altw_alpha_wh = run_backtest(prices, rf_daily, rebalance_dates,
+                                                  base_weights=ALT_WEIGHTS)
+
+    # 7. Load CSI300 benchmark
+    bench_nav = load_benchmark(equalw_nav.index)
+
+    # 8. Print results
+    print_results(equalw_nav, alpha_nav, altw_nav, altw_alpha_nav, bench_nav,
+                  alpha_wh, altw_alpha_wh, rf_daily)
 
 
 if __name__ == "__main__":
     main()
+
