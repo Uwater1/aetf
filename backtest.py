@@ -45,7 +45,8 @@ MOMENTUM_WINDOW = 20                # Short-term momentum lookback (trading days
 MOMENTUM_K = 1.3                    # Momentum threshold = k × rolling_std
 MIN_WEIGHT = 0.03                   # 3% minimum weight per ETF
 VOL_LOOKBACK = 60                   # Rolling window for volatility scaling
-SIGNAL_STRENGTH = 0.4               # Blend: 0=equal weight, 1=full alpha model
+SIGNAL_STRENGTH = 0.2               # Blend: 0=equal weight, 1=full alpha model
+STAMP_DUTY = 0.001                  # 0.1% stamp duty on sold value at each rebalance
 REBALANCE_MONTHS = [2, 5, 8, 11]    # Feb, May, Aug, Nov
 
 # Alt weights: proportional to AdjustedSharpe from etf_evaluation.csv, normalized to sum=1.
@@ -237,6 +238,16 @@ def run_backtest(prices, rf_daily, rebalance_dates, override_weights=None, base_
                 current_weights = override_weights.copy()
             else:
                 current_weights, _, _ = compute_alpha_weights(prices, date, base_weights)
+
+            # Stamp duty: 0.1% on the value of each ETF position that is reduced (sold)
+            new_values = {name: nav * current_weights[name] for name in etf_names}
+            stamp_cost = sum(
+                STAMP_DUTY * (holdings[name] - new_values[name])
+                for name in etf_names
+                if holdings[name] > new_values[name]
+            )
+            nav -= stamp_cost
+
             holdings = {name: nav * current_weights[name] for name in etf_names}
             weight_history.append({'date': date, 'weights': current_weights.copy()})
 
@@ -352,6 +363,7 @@ def load_benchmark(dates):
 
 def main():
     print("  Portfolio Backtest — 4 Strategies")
+    print(f"  Params: MA={MA_WINDOWS}/{MA_BLEND_WEIGHTS} Mom={MOMENTUM_WINDOW}d(k={MOMENTUM_K}) Vol={VOL_LOOKBACK}d MinW={MIN_WEIGHT} Signal={SIGNAL_STRENGTH} Stamp={STAMP_DUTY}")
 
     # 1. Load data
     print("\n[1] Loading ETF data...")

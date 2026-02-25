@@ -4,3 +4,5 @@ scipy
 numba
 baostock
 yfinance
+seaborn 
+matplotlib
