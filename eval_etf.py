@@ -97,29 +97,32 @@ def evaluate_etf():
             ret_3y = get_period_return(3)
             ret_5y = get_period_return(5)
             
-            df['excess_return'] = df['return'] - df['rf_daily']
+            # Use recent 600 lines for metrics to avoid historical bias (e.g. A-share historical drops)
+            df_recent = df.tail(600).copy()
             
-            mean_excess_daily = df['excess_return'].mean()
-            std_excess_daily = df['excess_return'].std()
+            df_recent['excess_return'] = df_recent['return'] - df_recent['rf_daily']
+            
+            mean_excess_daily = df_recent['excess_return'].mean()
+            std_excess_daily = df_recent['excess_return'].std()
             
             if std_excess_daily > 0 and not pd.isna(mean_excess_daily):
                 adjusted_sharp = (mean_excess_daily / std_excess_daily) * np.sqrt(252)
             else:
                 adjusted_sharp = np.nan
                 
-            mean_ret_daily = df['return'].mean()
-            std_ret_daily = df['return'].std()
+            mean_ret_daily = df_recent['return'].mean()
+            std_ret_daily = df_recent['return'].std()
             if std_ret_daily > 0 and not pd.isna(mean_ret_daily):
                 sharp = (mean_ret_daily / std_ret_daily) * np.sqrt(252)
             else:
                 sharp = np.nan
             
-            # Annualized Return using CAGR formula: (Final/Start)^(252/n) - 1
-            if len(df) > 1:
-                start_p = df['adj_close'].iloc[0]
-                end_p = df['adj_close'].iloc[-1]
+            # Annualized Return using CAGR formula on recent data: (Final/Start)^(252/n) - 1
+            if len(df_recent) > 1:
+                start_p = df_recent['adj_close'].iloc[0]
+                end_p = df_recent['adj_close'].iloc[-1]
                 if start_p > 0:
-                    ann_return = (end_p / start_p) ** (252 / len(df)) - 1
+                    ann_return = (end_p / start_p) ** (252 / len(df_recent)) - 1
                 else:
                     ann_return = np.nan
             else:
@@ -127,11 +130,11 @@ def evaluate_etf():
 
             ann_vol = std_ret_daily * np.sqrt(252) if not pd.isna(std_ret_daily) else np.nan
             
-            max_dd, max_dd_duration = calculate_drawdown_metrics(df['adj_close'])
+            max_dd, max_dd_duration = calculate_drawdown_metrics(df_recent['adj_close'])
             
             calmar = (ann_return / abs(max_dd)) if (not pd.isna(ann_return) and max_dd != 0) else np.nan
 
-            downside_returns = df[df['return'] < 0]['return']
+            downside_returns = df_recent[df_recent['return'] < 0]['return']
             downside_std = downside_returns.std()
             if downside_std > 0 and not pd.isna(mean_ret_daily):
                 sortino = (mean_ret_daily / downside_std) * np.sqrt(252)
