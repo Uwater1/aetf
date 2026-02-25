@@ -20,6 +20,22 @@ A concise pipeline for downloading, cleaning, and analyzing ETF (Exchange Traded
 - `selected2/`: Final curated dataset (no high correlation).
 - `selected-index/`: Specific index-related data.
 
+## 📊 Data Statistics
+
+- Total ETFs: 190
+-宽基ETF: 70
+- 红利/价值ETF: 15
+- 科技/半导体/电子ETF: 40
+- 新能源/绿色能源ETF: 6
+- 消费/医药/医疗ETF: 15
+- 行业/主题ETF: 40
+- 其他: 5
+
+## Results (After human analysis)
+1. report.md: 将ETF分类
+2. select.md: 将ETF进行最终筛选， 留下适合组建portfolio的ETF
+
+
 ## 🛠️ Requirements
 
 - Python 3.x
