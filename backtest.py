@@ -3,12 +3,13 @@
 Portfolio Backtest with Alpha Model
 
 Alpha Model:
-  - Primary signal: Mean-reversion / Value
-    → ETFs trading below their long-term MA are "undervalued" → higher weight
-    → ETFs trading above their long-term MA are "overvalued" → lower weight
-  - Momentum guard:
-    → If ETF is shooting up (strong positive momentum), don't sell/reduce
-    → If ETF is falling quickly (strong negative momentum), don't buy/increase
+  - Primary signal: Z-score mean-reversion across multiple MA timeframes
+    → Blended Z-score from 50/120/200-day MAs (positive = undervalued)
+  - Volatility scaling: Inverse-vol weighting equalizes risk contribution
+  - Adaptive momentum guard:
+    → Per-ETF threshold = k × rolling σ (self-calibrating to each ETF's vol)
+    → Strong rally: don't reduce below equal weight
+    → Strong crash: don't increase above minimum weight
 
 Rebalance: Quarterly (first trading day of Feb, May, Aug, Nov)
 Benchmark: Equal-weight portfolio (10% each)
@@ -38,12 +39,14 @@ PORTFOLIO_ETFS = [
 ]
 
 # Alpha model parameters
-MA_WINDOW = 120           # Long-term moving average window (trading days)
-MOMENTUM_WINDOW = 20      # Short-term momentum lookback (trading days)
-MOMENTUM_UP_THRESH = 0.08 # 8% in 20 days = strong rally, don't sell
-MOMENTUM_DN_THRESH = -0.08 # -8% in 20 days = strong crash, don't buy
-MIN_WEIGHT = 0.03         # 3% minimum weight per ETF
-REBALANCE_MONTHS = [2, 5, 8, 11]  # Feb, May, Aug, Nov
+MA_WINDOWS = [40, 80, 120]         # Multi-timeframe moving average windows
+MA_BLEND_WEIGHTS = [0.3, 0.4, 0.3]  # Blend weights for each MA timeframe
+MOMENTUM_WINDOW = 20                # Short-term momentum lookback (trading days)
+MOMENTUM_K = 1.3                    # Momentum threshold = k × rolling_std
+MIN_WEIGHT = 0.03                   # 3% minimum weight per ETF
+VOL_LOOKBACK = 60                   # Rolling window for volatility scaling
+SIGNAL_STRENGTH = 0.4               # Blend: 0=equal weight, 1=full alpha model
+REBALANCE_MONTHS = [2, 5, 8, 11]    # Feb, May, Aug, Nov
 
 
 def load_all_data(etf_names):
@@ -83,26 +86,29 @@ def get_rebalance_dates(dates, months):
 
 def compute_alpha_weights(prices, rebalance_date):
     """
-    Compute portfolio weights using value-based alpha + momentum guard.
-    
-    Value signal: MA_WINDOW-day MA / current price  (higher = more undervalued)
-    Momentum guard:
-      - If 20-day return > +8%, don't reduce weight (keep/boost)
-      - If 20-day return < -8%, don't increase weight (keep/reduce)
+    Compute portfolio weights using:
+      1. Multi-timeframe Z-score value signal (blended 50/120/200-day MAs)
+      2. Inverse-volatility scaling (risk parity adjustment)
+      3. Adaptive momentum guard (per-ETF, k × rolling_std threshold)
     """
     idx = prices.index.get_loc(rebalance_date)
     etf_names = prices.columns.tolist()
     n = len(etf_names)
     equal_w = 1.0 / n
 
-    # --- Value signal: how far below the MA ---
+    # --- Blended Z-score value signal across multiple MA timeframes ---
     value_scores = {}
     for name in etf_names:
-        history = prices[name].iloc[max(0, idx - MA_WINDOW):idx + 1]
-        ma = history.mean()
         current = prices[name].iloc[idx]
-        # ratio > 1 means price is below MA (undervalued)
-        value_scores[name] = ma / current if current > 0 else 1.0
+        blended_z = 0.0
+        for ma_win, blend_w in zip(MA_WINDOWS, MA_BLEND_WEIGHTS):
+            history = prices[name].iloc[max(0, idx - ma_win):idx + 1]
+            ma = history.mean()
+            rolling_std = history.std()
+            # Z-score: positive = price below MA (undervalued)
+            z = (ma - current) / rolling_std if rolling_std > 0 else 0.0
+            blended_z += blend_w * z
+        value_scores[name] = blended_z
 
     # --- Momentum signal ---
     momentum = {}
@@ -112,21 +118,45 @@ def compute_alpha_weights(prices, rebalance_date):
         p_now = prices[name].iloc[idx]
         momentum[name] = (p_now / p_start - 1) if p_start > 0 else 0.0
 
-    # --- Raw weights from value signal (normalize) ---
-    total_val = sum(value_scores.values())
-    raw_weights = {name: value_scores[name] / total_val for name in etf_names}
+    # --- Shift Z-scores so all are positive before weighting ---
+    min_z = min(value_scores.values())
+    shifted = {name: value_scores[name] - min_z + 0.1 for name in etf_names}
 
-    # --- Apply momentum guard ---
+    # --- Apply inverse-volatility scaling ---
+    inv_vol = {}
+    for name in etf_names:
+        vol_history = prices[name].iloc[max(0, idx - VOL_LOOKBACK):idx + 1]
+        vol = vol_history.pct_change().std() * np.sqrt(252)
+        inv_vol[name] = 1.0 / vol if vol > 0 else 1.0
+
+    # Combine: alpha_score × inverse_vol
+    combined = {name: shifted[name] * inv_vol[name] for name in etf_names}
+    total_combined = sum(combined.values())
+    alpha_weights = {name: combined[name] / total_combined for name in etf_names}
+
+    # --- Blend alpha weights with equal-weight (controls conviction) ---
+    raw_weights = {
+        name: SIGNAL_STRENGTH * alpha_weights[name] + (1 - SIGNAL_STRENGTH) * equal_w
+        for name in etf_names
+    }
+
+    # --- Adaptive momentum guard (per-ETF, k × σ threshold) ---
     adjusted = {}
     for name in etf_names:
         w = raw_weights[name]
         mom = momentum[name]
 
-        if mom > MOMENTUM_UP_THRESH:
-            # Strong rally: don't reduce below equal weight (keep riding)
+        # Compute per-ETF adaptive threshold from rolling return volatility
+        ret_history = prices[name].pct_change().iloc[max(0, idx - VOL_LOOKBACK):idx + 1]
+        ret_std = ret_history.std() * np.sqrt(MOMENTUM_WINDOW)
+        up_thresh = MOMENTUM_K * ret_std
+        dn_thresh = -MOMENTUM_K * ret_std
+
+        if mom > up_thresh:
+            # Strong rally (relative to this ETF's vol): keep riding
             w = max(w, equal_w)
-        elif mom < MOMENTUM_DN_THRESH:
-            # Strong crash: don't increase above minimum (avoid catching knife)
+        elif mom < dn_thresh:
+            # Strong crash (relative to this ETF's vol): avoid catching knife
             w = min(w, MIN_WEIGHT)
 
         adjusted[name] = w
