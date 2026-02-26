@@ -90,7 +90,6 @@ Trading Days                   553           553           553           553    
   2026-02-02 | Top: 工程机械ET=12%, 矿业ETF=12%, 沪港深500=11% | Bot: 石油ETF=10%, 中证500E=8%, 银行ETF华=3% | Spread: 8.5%
 
 Daily NAV saved to: /home/hallo/Documents/aetf/backtest_results.csv
-
 ```
 
 ## 🛠️ Requirements

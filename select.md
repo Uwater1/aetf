@@ -22,7 +22,7 @@
 | 6 | 中证2000ETF华夏 | 562660 | 1.052 | 55.7% | 34.0% | 30.3% | -34.0% | 小盘宽基 | Small-cap breadth exposure, captures micro-cap alpha |
 | 7 | 石油ETF | 561360 | 0.894 | 52.8% | 21.3% | 22.1% | -21.5% | 能源/石油 | Energy/commodities diversifier, inflation hedge |
 | 8 | 银行ETF华夏 | 515020 | 0.878 | 5.6% | 15.7% | 16.1% | -15.1% | 金融/银行 | Lowest volatility in portfolio; defensive dividend play, very low corr with tech |
-| 9 | 沪港深500ETF富国 | 517100 | 0.813 | 19.2% | 17.0% | 17.8% | -17.7% | 跨市场宽基 | Cross-market (Shanghai + HK + Shenzhen),Large Cap moderate risk |
+| 9 | 沪港深500ETF富国 | 517100 | 0.813 | 19.2% | 17.0% | 17.8% | -17.7% | 跨市场宽基 | Cross-market (Shanghai + HK + Shenzhen),Large Cap, moderate risk |
 | 10 | 中证500ETF国联 | 515550 | 0.762 | 41.7% | 20.1% | 24.6% | -22.7% | 中盘宽基 | Mid-cap index exposure, bridges large-cap and small-cap gap |
 
 ### Conditional Picks (data review recommended)
