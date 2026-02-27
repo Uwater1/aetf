@@ -35,8 +35,24 @@ A concise pipeline for downloading, cleaning, and analyzing ETF (Exchange Traded
 1. report.md: 将ETF分类
 2. select.md: 将ETF进行最终筛选， 留下适合组建portfolio的ETF
 
-## Alpha Model Result 
+## 📈 Portfolio Backtest (`backtest.py`)
+
+The `backtest.py` script runs a portfolio backtest implementing a custom Alpha Model designed to dynamically adjust ETF weighting.
+
+### Alpha Model Strategy
+1. **Value Signal**: Z-score mean-reversion across multiple moving average timeframes (40, 80, 120 days). It favors historically undervalued ETFs.
+2. **Volatility Scaling**: Inverse-volatility weighting is used to equalize risk contributions across ETFs.
+3. **Adaptive Momentum Guard**: Dynamic per-ETF thresholds (`k × rolling_std`) to enforce trend robustness.
+    - *Strong rally*: Prevents the model from reducing the ETF's weight below its baseline.
+    - *Strong crash*: Limits the ETF to the minimum weight to avoid catching falling knives.
+
+**Rebalance frequency**: Quarterly (February, May, August, November).
+
+### Execution
+
+```bash
 python backtest.py
+```
 
 ```md
   Portfolio Backtest — 4 Strategies
@@ -91,6 +107,11 @@ Trading Days                   553           553           553           553    
 
 Daily NAV saved to: /home/hallo/Documents/aetf/backtest_results.csv
 ```
+
+## 📋 TODO
+* Improve switching time selection (改善再平衡择时)
+* Improve weight (改善ETF默认权重)
+* Further prevent look ahead bias (减少用未来数据选择ETF的影响)
 
 ## 🛠️ Requirements
 
