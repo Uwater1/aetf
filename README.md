@@ -65,8 +65,12 @@ The `backtest.py` script runs a portfolio backtest implementing a custom Alpha M
 
 **Rebalance frequency**: Quarterly (February, May, August, November).
 
-### Execution
+### Additional improvement 
+- Defensive ETF tilt — 银行ETF华夏, 浙商之江凤凰ETF, 石油ETF get a 1.5× score multiplier when both CSI300 < EMA(60) and Volume MA(5) < Volume MA(60) are true.
+- Dynamic rebalancing — daily weight calculation, trade only when any ETF deviates >5% from target.
+- Per-ETF regime scoring — low-vol → mean-reversion (buy the dip), high-vol → momentum (buy the winner).
 
+### Execution
 ```bash
 python backtest.py
 ```
