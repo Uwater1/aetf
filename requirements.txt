@@ -6,3 +6,4 @@ baostock
 yfinance
 seaborn 
 matplotlib
+pandas-ta

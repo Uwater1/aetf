@@ -23,12 +23,22 @@ PORTFOLIO_ETFS = [
 BENCHMARK_ETF = '沪深300ETF广发_510360'
 
 # Setup Font
-if os.path.exists(FONT_PATH):
-    prop = fm.FontProperties(fname=FONT_PATH)
-    plt.rcParams['font.sans-serif'] = [prop.get_name()]
+try:
+    if os.path.exists(FONT_PATH):
+        fm.fontManager.addfont(FONT_PATH)
+        prop = fm.FontProperties(fname=FONT_PATH)
+        plt.rcParams['font.sans-serif'] = [prop.get_name(), 'sans-serif']
+    else:
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Droid Sans Fallback', 'WenQuanYi Micro Hei', 'SimHei']
     plt.rcParams['axes.unicode_minus'] = False
-else:
-    print(f"Warning: Font file {FONT_PATH} not found. Chinese characters might not display correctly.")
+except Exception as e:
+    print(f"Font loading error: {e}")
+
+def format_name(full_name):
+    """Remove the _###### suffix for cleaner labels."""
+    if '_' in full_name:
+        return full_name.split('_')[0]
+    return full_name
 
 def load_and_normalize():
     all_data = {}
@@ -40,9 +50,7 @@ def load_and_normalize():
             df = pd.read_csv(file_path)
             df['date'] = pd.to_datetime(df['date'])
             df = df.sort_values('date').set_index('date')
-            # Normalize: start at 1.0
-            # We want to align them to the start date where all have data
-            all_data[etf] = df['adj_close']
+            all_data[format_name(etf)] = df['adj_close']
         else:
             print(f"Warning: File for {etf} not found.")
 
@@ -51,34 +59,43 @@ def load_and_normalize():
     return normalized
 
 def plot_movements(df):
-    plt.figure(figsize=(12, 7))
+    plt.figure(figsize=(20, 10))
     
+    formatted_etfs = [format_name(e) for e in PORTFOLIO_ETFS]
+    formatted_bench = format_name(BENCHMARK_ETF)
+
     # Plot portfolio ETFs with thinner lines
-    for etf in PORTFOLIO_ETFS:
+    for etf in formatted_etfs:
         if etf in df.columns:
-            plt.plot(df.index, df[etf], label=etf, alpha=0.7, linewidth=1.5)
+            plt.plot(df.index, df[etf], label=etf, alpha=0.8, linewidth=1.5)
     
     # Plot benchmark with a thicker, distinct line
-    if BENCHMARK_ETF in df.columns:
-        plt.plot(df.index, df[BENCHMARK_ETF], label=f"Benchmark: {BENCHMARK_ETF}", 
-                 color='black', linewidth=3, linestyle='--')
+    if formatted_bench in df.columns:
+        plt.plot(df.index, df[formatted_bench], label=f"Benchmark: {formatted_bench}", 
+                 color='black', linewidth=3.5, linestyle='--', zorder=10)
     
-    plt.title('ETF Price Movement (Normalized to 1.0)', fontsize=14)
-    plt.xlabel('Date')
-    plt.ylabel('Cumulative Return')
-    plt.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize=8)
-    plt.grid(True, which='both', linestyle='--', alpha=0.5)
+    plt.title('ETF Portfolio Price Performance (Relative to Start)', fontsize=18, fontweight='bold', pad=20)
+    plt.xlabel('Date', fontsize=14)
+    plt.ylabel('Normalized NAV (Start = 1.0)', fontsize=14)
+    
+    # Move legend to top left corner inside the plot
+    plt.legend(loc='upper left', fontsize=11, frameon=True, framealpha=0.9, shadow=True)
+    
+    plt.grid(True, which='both', linestyle=':', alpha=0.6)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
     plt.tight_layout()
     
     output_image = os.path.join(BASE_DIR, 'etf_movements.png')
-    plt.savefig(output_image)
-    print(f"Plot saved to {output_image}")
+    plt.savefig(output_image, dpi=300)
+    print(f"Wide high-resolution plot saved to {output_image}")
 
 def print_summary(df):
     print("\n" + "="*50)
-    print(f"{'ETF Name':<30} | {'Total Return':>12}")
+    print(f"{'ETF Name':<25} | {'Total Return':>12}")
     print("-" * 50)
     
+    formatted_bench = format_name(BENCHMARK_ETF)
     results = []
     for etf in df.columns:
         total_return = (df[etf].iloc[-1] / df[etf].iloc[0] - 1) * 100
@@ -88,8 +105,8 @@ def print_summary(df):
     results.sort(key=lambda x: x[1], reverse=True)
     
     for etf, ret in results:
-        is_bench = " (Bench)" if etf == BENCHMARK_ETF else ""
-        print(f"{etf + is_bench:<30} | {ret:>11.2f}%")
+        suffix = " (Bench)" if etf == formatted_bench else ""
+        print(f"{etf + suffix:<25} | {ret:>11.2f}%")
     print("="*50)
 
 if __name__ == "__main__":

@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 """
-Portfolio Backtest with Alpha Model
+Portfolio Backtest with Dynamic Regime-Switching Alpha Model
 
 Alpha Model:
-  - Primary signal: Z-score mean-reversion across multiple MA timeframes
-    → Blended Z-score from 50/120/200-day MAs (positive = undervalued)
-  - Volatility scaling: Inverse-vol weighting equalizes risk contribution
-  - Adaptive momentum guard:
-    → Per-ETF threshold = k × rolling σ (self-calibrating to each ETF's vol)
-    → Strong rally: don't reduce below equal weight
-    → Strong crash: don't increase above minimum weight
+  - Per-ETF volatility regime detection:
+    → Low vol: Mean-reversion Z-score (buy the dip, with MA5 stop-loss)
+    → High vol: Momentum (buy the winner)
+  - Defensive tilt: 3 proven ETFs get priority when market is weak
+    → Weak market: CSI300 < EMA60 AND Volume MA5 < Volume MA60
+  - Dynamic rebalancing: trade only when max weight deviation > threshold
 
-Rebalance: Quarterly (first trading day of Feb, May, Aug, Nov)
 Benchmark: Equal-weight portfolio (10% each)
 """
 
 import os
 import pandas as pd
 import numpy as np
+import pandas_ta as ta
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 BASE_DIR = '/home/hallo/Documents/aetf'
 SELECTED_DIR = os.path.join(BASE_DIR, 'selected2')
 RF_FILE = os.path.join(BASE_DIR, 'riskFreeRate.csv')
 BENCHMARK_ETF = '沪深300ETF广发_510360'
+VOLUME_FILE = os.path.join(BASE_DIR, 'volume.csv')
 
 PORTFOLIO_ETFS = [
     '矿业ETF_561330',
@@ -38,16 +38,19 @@ PORTFOLIO_ETFS = [
     '中证500ETF国联_515550',
 ]
 
+# Defensive ETFs: proven resilient in downturns
+DEFENSIVE_ETFS = ['银行ETF华夏_515020', '浙商之江凤凰ETF_512190', '石油ETF_561360']
+DEFENSIVE_MULTIPLIER = 1.5           # Score boost for defensive ETFs in weak market
+
 # Alpha model parameters
-MA_WINDOWS = [40, 80, 120]         # Multi-timeframe moving average windows
-MA_BLEND_WEIGHTS = [0.3, 0.4, 0.3]  # Blend weights for each MA timeframe
-MOMENTUM_WINDOW = 20                # Short-term momentum lookback (trading days)
-MOMENTUM_K = 1.3                    # Momentum threshold = k × rolling_std
-MIN_WEIGHT = 0.03                   # 3% minimum weight per ETF
-VOL_LOOKBACK = 60                   # Rolling window for volatility scaling
-SIGNAL_STRENGTH = 0.2               # Blend: 0=equal weight, 1=full alpha model
-STAMP_DUTY = 0.001                  # 0.1% stamp duty on sold value at each rebalance
-REBALANCE_MONTHS = [2, 5, 8, 11]    # Feb, May, Aug, Nov
+MA_WINDOWS = [40, 80, 120]           # Multi-timeframe moving average windows
+MA_BLEND_WEIGHTS = [0.3, 0.4, 0.3]   # Blend weights for each MA timeframe
+MOMENTUM_WINDOW = 20                 # Short-term momentum lookback (trading days)
+MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
+VOL_LOOKBACK = 60                    # Rolling window for volatility scaling
+STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
+REBALANCE_THRESHOLD = 0.05           # Rebalance when max weight deviation > 5%
+VOL_REGIME_WINDOW = 20               # Rolling window for per-ETF vol regime detection
 
 # Alt weights: proportional to AdjustedSharpe from etf_evaluation.csv, normalized to sum=1.
 # Higher Sharpe → larger allocation. Range: ~7.5% (lowest) to ~12.3% (highest).
@@ -88,6 +91,46 @@ def load_risk_free_rate():
     # 'close' is annual rate in percent, convert to daily decimal
     rf_daily = rf_df['close'] / (100.0 * 252.0)
     return rf_daily
+
+
+def load_market_data():
+    """Load CSI300 prices + volume data, precompute regime indicators via pandas_ta.
+
+    Returns a DataFrame indexed by date with columns:
+      - csi300_close: CSI300 adj_close price
+      - csi300_ema60: EMA(60) of CSI300 close
+      - vol_ma5: 5-day SMA of market volume
+      - vol_ma60: 60-day SMA of market volume
+      - weak_market: bool, True when CSI300 < EMA60 AND vol_ma5 < vol_ma60
+    """
+    # CSI300 prices
+    bench_path = os.path.join(SELECTED_DIR, f'{BENCHMARK_ETF}.csv')
+    bench_df = pd.read_csv(bench_path)
+    bench_df['date'] = pd.to_datetime(bench_df['date'])
+    bench_df = bench_df.sort_values('date').set_index('date')
+
+    csi300 = bench_df[['adj_close']].rename(columns={'adj_close': 'csi300_close'})
+    csi300['csi300_ema60'] = ta.ema(csi300['csi300_close'], length=60)
+
+    # Volume data
+    vol_df = pd.read_csv(VOLUME_FILE)
+    vol_df['date'] = pd.to_datetime(vol_df['date'])
+    vol_df = vol_df.sort_values('date').set_index('date')
+
+    vol_df['vol_ma5'] = ta.sma(vol_df['volume_k'], length=5)
+    vol_df['vol_ma60'] = ta.sma(vol_df['volume_k'], length=60)
+
+    # Merge on date
+    market = csi300.join(vol_df[['vol_ma5', 'vol_ma60']], how='left')
+    market['vol_ma5'] = market['vol_ma5'].ffill()
+    market['vol_ma60'] = market['vol_ma60'].ffill()
+
+    # Weak market: both conditions must hold
+    market['weak_market'] = (
+        (market['csi300_close'] < market['csi300_ema60']) &
+        (market['vol_ma5'] < market['vol_ma60'])
+    )
+    return market
 
 
 def get_rebalance_dates(dates, months):
