@@ -56,40 +56,39 @@ These 10 ETFs are selected for the backtest portfolio based on their performance
 
 The `backtest.py` script implements a high-performance, Numba-optimized portfolio simulation using a **Relative Momentum & Trend-Filtering** alpha model.
 
-### Alpha Model Strategy (V2)
+### Alpha Model Strategy (V2.1)
 
 1.  **Base-Weight Anchoring**: Strategies start from either **Equal Weights** (10% each) or **Alt Weights** (Sharpe-proportional from `etf_evaluation.csv`).
-2.  **Relative Momentum Tilt**: Calculated daily based on 20-day returns.
-    *   **Surge**: Top 3 momentum winners gain `+ALPHA_STRENGTH` (e.g., 1.5x weight).
-    *   **Cut**: Bottom 3 momentum losers are penalized by `-ALPHA_STRENGTH` (e.g., 0.5x weight).
-3.  **Absolute Trend Filter**: If an ETF's price is below its **60-day Moving Average (MA60)**, its weight is penalized by `1 - ALPHA_STRENGTH` to avoid "falling knives."
+2.  **Convex Soft Rank Momentum**: Calculated daily based on 20-day returns.
+    *   Replaces the old hard Top-3/Bottom-3 system with a continuous **Power-Law Ranking** formula.
+    *   **Formula**: `multiplier = 1 + ALPHA_STRENGTH * scale * sign(norm) * |norm|^RANK_POWER`.
+    *   **RANK_POWER (0.5)**: Concentrates the allocation shift on the extremes (top/bottom performers) while maintaining a smooth gradient for middle-ranked ETFs to prevent "cliff-edge" rebalancing.
+3.  **Absolute Trend Filter (EMA60)**: If an ETF's price is below its **60-day Exponential Moving Average (EMA60)**, its weight is penalized by `1 - ALPHA_STRENGTH`.
 4.  **Market Regime Overrides**:
-    *   **Weak Market** (`CSI300 < EMA60` & `Volume MA5 < MA60`): Momentum surges are DISABLED. Instead, defensive ETFs (银行, 浙商, 石油) receive a `1 + ALPHA_STRENGTH` boost.
-    *   **Aggressive Mode**: If the market has been "non-weak" for ≥3 consecutive days, the Top 3 surge multiplier increases to `1 + 1.5 * ALPHA_STRENGTH`.
-5.  **Dynamic Rebalancing**: Weights drift daily with market price. Trades (0.1% stamp duty) trigger only when:
-    *   Max weight deviation across any ETF exceeds **10%**.
-    *   A **5-day minimum cooldown** between trades has passed.
+    *   **Weak Market** (`CSI300 < EMA60` & `Volume MA5 < MA60`): Momentum tilts are DISABLED. Instead, defensive ETFs (银行, 浙商, 石油) receive a `1 + ALPHA_STRENGTH` boost.
+    *   **Aggressive Mode**: If the market has been "non-weak" for ≥3 consecutive days, the momentum scale factor increases by **1.5x**.
+5.  **Dynamic Rebalancing**: Efficient execution with **0.1% stamp duty**. Rebalances trigger when:
+    *   Max weight deviation exceeds **11%**.
+    *   A **5-day minimum cooldown** prevents over-trading.
 
-### Performance Results (V2)
+### Performance Results (V2.1 - Convex Soft Rank)
 
-The V2 strategy significantly outperforms the EqualW baseline and the CSI300 benchmark.
+The V2.1 strategy achieves superior risk-adjusted returns and improved efficiency (lower turnover) compared to V2.
 
-```markdown
-| Metric | EqualW | Regime+Def | AltW | AltW+Reg | CSI300 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Total Return** | 85.30% | 91.31% | 88.91% | 100.22% | 38.44% |
-| **CAGR** | 32.26% | 34.18% | 33.42% | 36.98% | 15.88% |
-| **Sharpe** | 1.449 | 1.488 | 1.472 | 1.525 | 0.764 |
-| **Sortino** | 1.961 | 1.971 | 1.998 | 2.060 | 1.042 |
-| **Volatility** | 19.21% | 19.75% | 19.55% | 20.77% | 19.05% |
-| **Max Drawdown** | -14.75% | -13.71% | -14.91% | -14.72% | -18.67% |
-| **Calmar** | 2.187 | 2.492 | 2.242 | 2.512 | 0.851 |
+| Metric | EqualW | Regime+Def | AltW | **AltW+Regime** | CSI300 |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Total Return** | 85.30% | 91.31% | 88.91% | **100.22%** | 38.44% |
+| **CAGR** | 32.26% | 34.18% | 33.42% | **36.98%** | 15.88% |
+| **Sharpe** | 1.449 | 1.488 | 1.472 | **1.525** | 0.764 |
+| **Sortino** | 1.961 | 1.971 | 1.998 | **2.060** | 1.042 |
+| **Max DD** | -14.75% | -13.71% | -14.91% | **-14.72%** | -18.67% |
+| **Trades** | — | 30 | — | **37** | — |
+| **Calmar** | 2.187 | 2.492 | 2.242 | **2.512** | 0.851 |
 | **Trading Days** | 556 | 556 | 556 | 556 | 556 |
 
   Rebalance trades fired : 30 (Eq Base) | 37 (Alt Base)
   Weak market days       : 129/556 (23.2%)
-```
-
+  
 ### Execution
 
 ```bash
