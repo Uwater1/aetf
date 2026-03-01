@@ -51,8 +51,8 @@ def compute_individual_sharpes(prices):
         sharpes[name] = ann_sharpe
     return sharpes
 
-PORTFOLIO_ETFS = [
-    '中证500',
+PORTFOLIO_ETFS = [ # A combination of mutiple ETF, to maximize liquidity
+    '中证500', 
     '银行',
     '有色矿业',
     '浙商凤凰',

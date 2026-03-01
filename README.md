@@ -68,7 +68,7 @@ The `backtest.py` script implements a high-performance, Numba-optimized portfoli
     *   **Weak Market** (`CSI300 < EMA60` & `Volume MA5 < MA60`): Momentum tilts are DISABLED. Instead, defensive ETFs (银行, 浙商, 石油) receive a `1 + ALPHA_STRENGTH` boost.
     *   **Aggressive Mode**: If the market has been "non-weak" for ≥3 consecutive days, the momentum scale factor increases by **1.5x**.
 5.  **Dynamic Rebalancing**: Efficient execution with **0.1% stamp duty**. Rebalances trigger when:
-    *   Max weight deviation exceeds **11%**.
+    *   Max weight deviation exceeds **10%**.
     *   A **5-day minimum cooldown** prevents over-trading.
 
 ### Performance Results (V2.1 - Convex Soft Rank)
