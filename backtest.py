@@ -3,9 +3,10 @@
 Portfolio Backtest with Dynamic Regime-Switching Alpha Model
 
 Alpha Model:
-  - Per-ETF volatility regime detection:
-    → Low vol: Mean-reversion Z-score (buy the dip, with MA5 stop-loss)
-    → High vol: Momentum (buy the winner)
+  - Convex Soft Rank Momentum: all ETFs tilted by power-law ranking multiplier
+    → mult = 1 + α·scale·sign(norm)·|norm|^RANK_POWER  where norm ∈ [−1,+1]
+    → RANK_POWER < 1 concentrates signal at extremes (convex curve)
+    → Normal: scale=1.0, Aggressive (3+ non-weak days): scale=1.5
   - Defensive tilt: 3 proven ETFs get priority when market is weak
     → Weak market: CSI300 < EMA60 AND Volume MA5 < Volume MA60
   - Dynamic rebalancing: trade only when max weight deviation > threshold
@@ -49,6 +50,7 @@ MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
 REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
+RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
 
 # Alt weights: proportional to Sharp from etf_evaluation.csv, normalized to sum=1.
 # Higher Sharpe → larger allocation.
@@ -165,15 +167,18 @@ def precompute_indicators(prices):
 def jit_backtest_core(
     prices_arr, daily_returns_arr, weak_market_arr, ma60_arr,
     defensive_mask, n_days, n_etfs, min_weight, rebalance_threshold, min_hold_days,
-    stamp_duty, momentum_window, alpha_strength,
+    stamp_duty, momentum_window, alpha_strength, rank_power,
     base_weights_arr, override_weights_arr=None
 ):
     """
     V2 Backtest Core Loop (Numba @njit):
-      - Relative Momentum: rank 20-day returns, Surge Top-3 by (1+alpha), Cut Bottom-3 by (1-alpha)
+      - Convex Soft Rank Momentum: power-law tilt across all ETFs by rank
+        → norm = 2*rank/(N-1) - 1  ∈ [-1, +1]
+        → convex = sign(norm) * |norm|^rank_power   (rank_power<1 → extreme-focused)
+        → multiplier[k] = 1 + alpha * scale * convex
+        → scale=1.0 (normal), scale=1.5 (aggressive: 3+ consecutive non-weak days)
       - Trend Filter: if price < MA60, penalize by (1-alpha)
-      - Weak Market: disable Surge, enable Defensive tilt (1+alpha) on 3 defensive ETFs
-      - Aggressive Mode: if not weak for 3 consecutive days, Surge Top-3 by (1 + 1.5*alpha)
+      - Weak Market: disable momentum tilt, enable Defensive tilt (1+alpha) on 3 defensive ETFs
     """
     nav_history = np.zeros(n_days)
     weight_history_vals = np.zeros((n_days, n_etfs))
@@ -193,24 +198,30 @@ def jit_backtest_core(
             p0 = prices_arr[mom_start, i]
             mom_ret[i] = (prices_arr[t, i] / p0 - 1.0) if p0 > 0 else 0.0
 
-        # Argsort ascending => last n are top (highest return)
+        # Argsort ascending => rank 0 = worst momentum, rank N-1 = best
         order = np.argsort(mom_ret)   # ascending
 
         if is_weak:
-            # Weak market: disable momentum surge; only defensive tilt active
+            # Weak market: disable momentum tilt; only defensive tilt active
             for i in range(n_etfs):
                 if defensive_mask[i]:
                     weights[i] *= (1.0 + alpha_strength)
         else:
-            # Normal or Aggressive: apply momentum tilt
-            surge = (1.0 + 1.5 * alpha_strength) if is_aggressive else (1.0 + alpha_strength)
-            cut   = (1.0 - alpha_strength)
-            # Bottom-3: indices order[0], order[1], order[2]
-            for k in range(3):
-                weights[order[k]] *= cut
-            # Top-3: indices order[-1], order[-2], order[-3]
-            for k in range(3):
-                weights[order[n_etfs - 1 - k]] *= surge
+            # Convex soft ranking: power-law curve concentrates signal at extremes
+            # norm = 2*rank/(N-1) - 1  ∈ [-1, +1]
+            # convex = sign(norm) * |norm|^rank_power  (rank_power<1 → top/bottom heavier)
+            # mult = 1 + alpha * scale * convex
+            scale = 1.5 if is_aggressive else 1.0
+            denom = float(n_etfs - 1)
+            for rank_pos in range(n_etfs):
+                etf_idx = order[rank_pos]
+                normalized = 2.0 * rank_pos / denom - 1.0   # in [-1, +1]
+                if normalized >= 0.0:
+                    convex = normalized ** rank_power
+                else:
+                    convex = -((-normalized) ** rank_power)
+                mult = 1.0 + alpha_strength * scale * convex
+                weights[etf_idx] *= mult
 
         # 2. Absolute trend filter: price < MA60 → penalize
         for i in range(n_etfs):
@@ -311,7 +322,7 @@ def run_backtest(prices, rf_daily, market_data, ma60_arr, base_weights=None, ove
     nav_hist, weight_hist_vals, rebalance_flags, n_trades = jit_backtest_core(
         prices_arr, daily_returns_arr, weak_market_arr, ma60_arr,
         defensive_mask, len(prices), len(etf_names), MIN_WEIGHT, REBALANCE_THRESHOLD,
-        MIN_HOLD_DAYS, STAMP_DUTY, MOMENTUM_WINDOW, ALPHA_STRENGTH,
+        MIN_HOLD_DAYS, STAMP_DUTY, MOMENTUM_WINDOW, ALPHA_STRENGTH, RANK_POWER,
         bw_arr, ov_arr
     )
 
@@ -432,8 +443,10 @@ def main():
     print("  Portfolio Backtest — V2 Relative Momentum + Defensive Strategy")
     print(f"  Params: Mom={MOMENTUM_WINDOW}d MA60={MA60_WINDOW}d MinW={MIN_WEIGHT} "
           f"AlphaStr={ALPHA_STRENGTH} Thresh={REBALANCE_THRESHOLD} Stamp={STAMP_DUTY}")
+    print(f"  Convex Soft Rank: power={RANK_POWER} best={1+ALPHA_STRENGTH:.2f}x worst={1-ALPHA_STRENGTH:.2f}x "
+          f"(aggressive scale=1.5x after 3 non-weak days)")
     print(f"  Defensive ETFs: {[e.split('_')[0] for e in DEFENSIVE_ETFS]} "
-          f"(boost={1+ALPHA_STRENGTH:.1f}x in weak market, aggressive={1+1.5*ALPHA_STRENGTH:.2f}x after 3 non-weak days)")
+          f"(boost={1+ALPHA_STRENGTH:.2f}x in weak market)")
 
     # 1. Load ETF prices, risk-free rate, market regime data
     print("\n[1] Loading data...")
