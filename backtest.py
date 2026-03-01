@@ -21,8 +21,8 @@ import pandas_ta as ta
 from numba import njit
 # ─── Configuration ───────────────────────────────────────────────────────────
 BASE_DIR = '/home/hallo/Documents/aetf'
-SELECTED_DIR = os.path.join(BASE_DIR, 'selected2')
-BENCHMARK_ETF = '沪深300ETF广发_510360'
+SELECTED_DIR = os.path.join(BASE_DIR, 'selected3')
+BENCHMARK_ETF = '沪深300'
 VOLUME_FILE = os.path.join(BASE_DIR, 'volume.csv')
 ANNUAL_RF = 0.0 # Use the old Sharpe ratio
 RF_DAILY = ANNUAL_RF / 250.0
@@ -52,20 +52,20 @@ def compute_individual_sharpes(prices):
     return sharpes
 
 PORTFOLIO_ETFS = [
-    '矿业ETF_561330',
-    '浙商之江凤凰ETF_512190',
-    '工程机械ETF_560280',
-    '电信ETF易方达_563010',
-    '半导体设备ETF_561980',
-    '中证2000ETF华夏_562660',
-    '石油ETF_561360',
-    '银行ETF华夏_515020',
-    '沪港深500ETF富国_517100',
-    '中证500ETF国联_515550',
+    '中证500',
+    '银行',
+    '有色矿业',
+    '浙商凤凰',
+    '沪港深500',
+    '电信',
+    '芯片',
+    '工程机械',
+    '中证2000',
+    '石油',
 ]
 
 # Defensive ETFs: proven resilient in downturns
-DEFENSIVE_ETFS = ['银行ETF华夏_515020', '浙商之江凤凰ETF_512190', '石油ETF_561360']
+DEFENSIVE_ETFS = ['银行', '浙商凤凰', '石油']
 ALPHA_STRENGTH = 0.4                 # Multiplier offset for Surge/Cut/Defensive
 
 # Alpha model parameters (V2)
@@ -73,7 +73,7 @@ MA60_WINDOW = 60                     # Absolute trend filter moving average
 MOMENTUM_WINDOW = 20                 # Short-term momentum lookback (trading days)
 MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
-REBALANCE_THRESHOLD = 0.11           # Rebalance when max weight deviation > 10%
+REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
 RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
 
