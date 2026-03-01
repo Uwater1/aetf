@@ -22,9 +22,34 @@ from numba import njit
 # ─── Configuration ───────────────────────────────────────────────────────────
 BASE_DIR = '/home/hallo/Documents/aetf'
 SELECTED_DIR = os.path.join(BASE_DIR, 'selected2')
-RF_FILE = os.path.join(BASE_DIR, 'riskFreeRate.csv')
 BENCHMARK_ETF = '沪深300ETF广发_510360'
 VOLUME_FILE = os.path.join(BASE_DIR, 'volume.csv')
+ANNUAL_RF = 0.0 # Use the old Sharpe ratio
+RF_DAILY = ANNUAL_RF / 250.0
+
+
+def load_all_data(etf_names):
+    """Load adj_close for all ETFs into a single DataFrame, aligned by date."""
+    series = {}
+    for name in etf_names:
+        filepath = os.path.join(SELECTED_DIR, f'{name}.csv')
+        df = pd.read_csv(filepath)
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').set_index('date')
+        series[name] = df['adj_close']
+    prices = pd.DataFrame(series).dropna()  # only dates where ALL ETFs have data
+    return prices
+
+
+def compute_individual_sharpes(prices):
+    """Compute Sharpe ratio for each ETF over the common period (starting from youngest ETF)."""
+    returns = prices.pct_change().dropna()
+    sharpes = {}
+    for name in prices.columns:
+        excess = returns[name] - RF_DAILY
+        ann_sharpe = excess.mean() / excess.std() * np.sqrt(252) if excess.std() > 0 else 0
+        sharpes[name] = ann_sharpe
+    return sharpes
 
 PORTFOLIO_ETFS = [
     '矿业ETF_561330',
@@ -52,45 +77,14 @@ REBALANCE_THRESHOLD = 0.11           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
 RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
 
-# Alt weights: proportional to Sharp from etf_evaluation.csv, normalized to sum=1.
+# Alt weights: computed starting from the youngest ETF's inception date.
 # Higher Sharpe → larger allocation.
-_SHARPE = {
-    '矿业ETF_561330':          1.3210,
-    '浙商之江凤凰ETF_512190':  1.2790,
-    '工程机械ETF_560280':      1.2407,
-    '电信ETF易方达_563010':    1.2091,
-    '半导体设备ETF_561980':    1.1508,
-    '中证2000ETF华夏_562660':  1.1198,
-    '石油ETF_561360':          0.9863,
-    '银行ETF华夏_515020':      1.0061,
-    '沪港深500ETF富国_517100': 0.9297,
-    '中证500ETF国联_515550':   0.8468,
-}
+_prices_temp = load_all_data(PORTFOLIO_ETFS)
+_SHARPE = compute_individual_sharpes(_prices_temp)
 _total_sharpe = sum(_SHARPE.values())
 ALT_WEIGHTS = {name: v / _total_sharpe for name, v in _SHARPE.items()}
 
 
-def load_all_data(etf_names):
-    """Load adj_close for all ETFs into a single DataFrame, aligned by date."""
-    series = {}
-    for name in etf_names:
-        filepath = os.path.join(SELECTED_DIR, f'{name}.csv')
-        df = pd.read_csv(filepath)
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date').set_index('date')
-        series[name] = df['adj_close']
-    prices = pd.DataFrame(series).dropna()  # only dates where ALL ETFs have data
-    return prices
-
-
-def load_risk_free_rate():
-    """Load daily risk-free rate as annualized decimal (e.g., 0.02 = 2%)."""
-    rf_df = pd.read_csv(RF_FILE)
-    rf_df['date'] = pd.to_datetime(rf_df['time'])
-    rf_df = rf_df.sort_values('date').set_index('date')
-    # 'close' is annual rate in percent, convert to daily decimal
-    rf_daily = rf_df['close'] / (100.0 * 252.0)
-    return rf_daily
 
 
 def load_market_data():
@@ -297,7 +291,7 @@ def jit_backtest_core(
     return nav_history, weight_history_vals, rebalance_flags, n_trades
 
 
-def run_backtest(prices, rf_daily, market_data, ma60_arr, base_weights=None, override_weights=None):
+def run_backtest(prices, market_data, ma60_arr, base_weights=None, override_weights=None):
     """
     Run the backtest with V2 regime logic, optimized by Numba @njit.
     base_weights: dict of {etf_name -> weight} used as starting allocation (default: equal).
@@ -340,19 +334,9 @@ def run_backtest(prices, rf_daily, market_data, ma60_arr, base_weights=None, ove
 
 
 
-def compute_individual_sharpes(prices, rf_daily):
-    """Compute Sharpe ratio for each ETF over the common period (starting from youngest ETF)."""
-    returns = prices.pct_change().dropna()
-    rf_aligned = rf_daily.reindex(returns.index).ffill().bfill().fillna(0)
-    sharpes = {}
-    for name in prices.columns:
-        excess = returns[name] - rf_aligned
-        ann_sharpe = excess.mean() / excess.std() * np.sqrt(252) if excess.std() > 0 else 0
-        sharpes[name] = ann_sharpe
-    return sharpes
 
 
-def compute_metrics(nav_series, rf_daily):
+def compute_metrics(nav_series):
     """Compute performance metrics: total return, CAGR, Sharpe, Sortino, MaxDD, Calmar."""
     total_ret = nav_series.iloc[-1] / nav_series.iloc[0] - 1
     n_days = len(nav_series)
@@ -360,9 +344,7 @@ def compute_metrics(nav_series, rf_daily):
 
     daily_ret = nav_series.pct_change().dropna()
 
-    # Align risk-free rate
-    rf_aligned = rf_daily.reindex(daily_ret.index).ffill().bfill().fillna(0)
-    excess = daily_ret - rf_aligned
+    excess = daily_ret - RF_DAILY
     sharpe = excess.mean() / excess.std() * np.sqrt(252) if excess.std() > 0 else 0
 
     # Sortino (downside deviation only)
@@ -393,13 +375,13 @@ def compute_metrics(nav_series, rf_daily):
 
 
 def print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
-                  regime_wh, altw_regime_wh, rf_daily, n_trades_eq, n_trades_alt, n_weak_days, n_total_days):
+                  regime_wh, altw_regime_wh, n_trades_eq, n_trades_alt, n_weak_days, n_total_days):
     """Print 4-strategy performance comparison and diagnostics."""
-    eq_m = compute_metrics(equalw_nav, rf_daily)
-    rg_m = compute_metrics(regime_nav, rf_daily)
-    aw_m = compute_metrics(altw_nav, rf_daily)
-    ar_m = compute_metrics(altw_regime_nav, rf_daily)
-    bn_m = compute_metrics(bench_nav,  rf_daily)
+    eq_m = compute_metrics(equalw_nav)
+    rg_m = compute_metrics(regime_nav)
+    aw_m = compute_metrics(altw_nav)
+    ar_m = compute_metrics(altw_regime_nav)
+    bn_m = compute_metrics(bench_nav)
 
     COL = 12
     print("\n" + "=" * 85)
@@ -461,29 +443,13 @@ def main():
     print(f"  Defensive ETFs: {[e.split('_')[0] for e in DEFENSIVE_ETFS]} "
           f"(boost={1+ALPHA_STRENGTH:.2f}x in weak market)")
 
-    # 1. Load ETF prices, risk-free rate, market regime data
+    # 1. Load ETF prices, market regime data
     print("\n[1] Loading data...")
     prices    = load_all_data(PORTFOLIO_ETFS)
-    rf_daily  = load_risk_free_rate()
     market_data = load_market_data()
     print(f"    ETFs       : {len(prices.columns)}")
 
-    # 1.1 Calculate Sharpe ratios using the common starting date (the youngest ETF)
-    print("\n[1.1] Calculating Individual Sharpe (common period starting from youngest)...")
-    dynamic_sharpes = compute_individual_sharpes(prices, rf_daily)
-    
-    # Print comparison with hardcoded values
-    print(f"{'ETF Name':<25} | {'CSV Sharpe':>10} | {'Dynamic':>10}")
-    print("-" * 50)
-    for name in PORTFOLIO_ETFS:
-        csv_s = _SHARPE.get(name, 0)
-        dyn_s = dynamic_sharpes.get(name, 0)
-        print(f"{name:<25} | {csv_s:10.4f} | {dyn_s:10.4f}")
-
-    # Dynamically update ALT_WEIGHTS for the backtest
-    total_dyn_sharpe = sum(dynamic_sharpes.values())
-    current_alt_weights = {name: s / total_dyn_sharpe for name, s in dynamic_sharpes.items()}
-    print("\n    Updated Alt Weights based on Dynamic Sharpe ratios.")
+    print(f"    ETFs       : {len(prices.columns)}")
 
     # 2. Precompute per-ETF MA60 tables (pandas_ta, done once)
     print("[2] Precomputing indicators...")
@@ -492,23 +458,23 @@ def main():
     # 3. Strategy 1: Equal weight baseline (static, no regime model)
     print("[3] Running Equal Weight strategy...")
     equal_weights = {name: 1.0 / len(PORTFOLIO_ETFS) for name in PORTFOLIO_ETFS}
-    equalw_nav, _, _ = run_backtest(prices, rf_daily, market_data, ma60_arr,
+    equalw_nav, _, _ = run_backtest(prices, market_data, ma60_arr,
                                     override_weights=equal_weights)
 
     # 4. Strategy 2: Equal Base + V2 Regime model
     print("[4] Running Equal Base + Regime strategy...")
-    regime_nav, regime_wh, n_trades_eq = run_backtest(prices, rf_daily, market_data, ma60_arr,
+    regime_nav, regime_wh, n_trades_eq = run_backtest(prices, market_data, ma60_arr,
                                                        base_weights=equal_weights)
 
     # 5. Strategy 3: Alt Weight baseline (static, Sharpe-proportional)
     print("[5] Running Alt Weight strategy...")
-    altw_nav, _, _ = run_backtest(prices, rf_daily, market_data, ma60_arr,
-                                  override_weights=current_alt_weights)
+    altw_nav, _, _ = run_backtest(prices, market_data, ma60_arr,
+                                  override_weights=ALT_WEIGHTS)
 
     # 6. Strategy 4: Alt Base + V2 Regime model
     print("[6] Running Alt Base + Regime strategy...")
-    altw_regime_nav, altw_regime_wh, n_trades_alt = run_backtest(prices, rf_daily, market_data, ma60_arr,
-                                                                   base_weights=current_alt_weights)
+    altw_regime_nav, altw_regime_wh, n_trades_alt = run_backtest(prices, market_data, ma60_arr,
+                                                                   base_weights=ALT_WEIGHTS)
 
     # 7. Load CSI300 benchmark
     bench_nav = load_benchmark(equalw_nav.index)
@@ -520,7 +486,7 @@ def main():
 
     # 9. Print results
     print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
-                  regime_wh, altw_regime_wh, rf_daily, n_trades_eq, n_trades_alt, n_weak_days, len(prices))
+                  regime_wh, altw_regime_wh, n_trades_eq, n_trades_alt, n_weak_days, len(prices))
 
 
 
