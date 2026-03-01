@@ -41,7 +41,7 @@ PORTFOLIO_ETFS = [
 
 # Defensive ETFs: proven resilient in downturns
 DEFENSIVE_ETFS = ['银行ETF华夏_515020', '浙商之江凤凰ETF_512190', '石油ETF_561360']
-ALPHA_STRENGTH = 0.4                 # Multiplier offset for Surge/Cut/Defensive
+ALPHA_STRENGTH = 0.5                 # Multiplier offset for Surge/Cut/Defensive
 
 # Alpha model parameters (V2)
 MA60_WINDOW = 60                     # Absolute trend filter moving average
