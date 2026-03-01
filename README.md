@@ -75,6 +75,7 @@ The `backtest.py` script implements a high-performance, Numba-optimized portfoli
 The V2 strategy significantly outperforms the EqualW baseline and the CSI300 benchmark.
 
 '''
+
 Metric                   EqualW   Regime+Def         AltW     AltW+Reg       CSI300
 -------------------------------------------------------------------------------------
 Total Return             85.30%       91.31%       88.91%      100.22%       38.44%
@@ -88,6 +89,7 @@ Trading Days                556          556          556          556          
 
   Rebalance trades fired : 30 (Eq Base) | 37 (Alt Base)
   Weak market days       : 129/556 (23.2%)
+  
 '''
 ### Execution
 
