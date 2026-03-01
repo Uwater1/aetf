@@ -87,6 +87,7 @@ The V2.1 strategy achieves superior risk-adjusted returns and improved efficienc
 | **Trading Days** | 556 | 556 | 556 | 556 | 556 |
 
   Rebalance trades fired : 30 (Eq Base) | 37 (Alt Base)
+  
   Weak market days       : 129/556 (23.2%)
   
 ### Execution

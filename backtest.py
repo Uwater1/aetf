@@ -339,6 +339,19 @@ def run_backtest(prices, rf_daily, market_data, ma60_arr, base_weights=None, ove
 
 
 
+
+def compute_individual_sharpes(prices, rf_daily):
+    """Compute Sharpe ratio for each ETF over the common period (starting from youngest ETF)."""
+    returns = prices.pct_change().dropna()
+    rf_aligned = rf_daily.reindex(returns.index).ffill().bfill().fillna(0)
+    sharpes = {}
+    for name in prices.columns:
+        excess = returns[name] - rf_aligned
+        ann_sharpe = excess.mean() / excess.std() * np.sqrt(252) if excess.std() > 0 else 0
+        sharpes[name] = ann_sharpe
+    return sharpes
+
+
 def compute_metrics(nav_series, rf_daily):
     """Compute performance metrics: total return, CAGR, Sharpe, Sortino, MaxDD, Calmar."""
     total_ret = nav_series.iloc[-1] / nav_series.iloc[0] - 1
@@ -453,8 +466,24 @@ def main():
     prices    = load_all_data(PORTFOLIO_ETFS)
     rf_daily  = load_risk_free_rate()
     market_data = load_market_data()
-    print(f"    Price data : {prices.index[0].date()} → {prices.index[-1].date()}, {len(prices)} days")
     print(f"    ETFs       : {len(prices.columns)}")
+
+    # 1.1 Calculate Sharpe ratios using the common starting date (the youngest ETF)
+    print("\n[1.1] Calculating Individual Sharpe (common period starting from youngest)...")
+    dynamic_sharpes = compute_individual_sharpes(prices, rf_daily)
+    
+    # Print comparison with hardcoded values
+    print(f"{'ETF Name':<25} | {'CSV Sharpe':>10} | {'Dynamic':>10}")
+    print("-" * 50)
+    for name in PORTFOLIO_ETFS:
+        csv_s = _SHARPE.get(name, 0)
+        dyn_s = dynamic_sharpes.get(name, 0)
+        print(f"{name:<25} | {csv_s:10.4f} | {dyn_s:10.4f}")
+
+    # Dynamically update ALT_WEIGHTS for the backtest
+    total_dyn_sharpe = sum(dynamic_sharpes.values())
+    current_alt_weights = {name: s / total_dyn_sharpe for name, s in dynamic_sharpes.items()}
+    print("\n    Updated Alt Weights based on Dynamic Sharpe ratios.")
 
     # 2. Precompute per-ETF MA60 tables (pandas_ta, done once)
     print("[2] Precomputing indicators...")
@@ -474,12 +503,12 @@ def main():
     # 5. Strategy 3: Alt Weight baseline (static, Sharpe-proportional)
     print("[5] Running Alt Weight strategy...")
     altw_nav, _, _ = run_backtest(prices, rf_daily, market_data, ma60_arr,
-                                  override_weights=ALT_WEIGHTS)
+                                  override_weights=current_alt_weights)
 
     # 6. Strategy 4: Alt Base + V2 Regime model
     print("[6] Running Alt Base + Regime strategy...")
     altw_regime_nav, altw_regime_wh, n_trades_alt = run_backtest(prices, rf_daily, market_data, ma60_arr,
-                                                                   base_weights=ALT_WEIGHTS)
+                                                                   base_weights=current_alt_weights)
 
     # 7. Load CSI300 benchmark
     bench_nav = load_benchmark(equalw_nav.index)
