@@ -6,7 +6,7 @@ from datetime import datetime
 
 # Constants
 BASE_DIR = '/home/hallo/Documents/aetf'
-SELECTED_DIR = os.path.join(BASE_DIR, 'selected')
+SELECTED_DIR = os.path.join(BASE_DIR, 'selected2')
 RF_FILE = os.path.join(BASE_DIR, 'riskFreeRate.csv')
 OUTPUT_FILE = os.path.join(BASE_DIR, 'etf_evaluation.csv')
 
