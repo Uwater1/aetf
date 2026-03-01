@@ -40,35 +40,32 @@ PORTFOLIO_ETFS = [
 
 # Defensive ETFs: proven resilient in downturns
 DEFENSIVE_ETFS = ['银行ETF华夏_515020', '浙商之江凤凰ETF_512190', '石油ETF_561360']
-DEFENSIVE_MULTIPLIER = 1.5           # Score boost for defensive ETFs in weak market
+ALPHA_STRENGTH = 0.5                 # Multiplier offset for Surge/Cut/Defensive
 
-# Alpha model parameters
-MA_WINDOWS = [40, 80, 120]           # Multi-timeframe moving average windows
-MA_BLEND_WEIGHTS = [0.3, 0.4, 0.3]   # Blend weights for each MA timeframe
+# Alpha model parameters (V2)
+MA60_WINDOW = 60                     # Absolute trend filter moving average
 MOMENTUM_WINDOW = 20                 # Short-term momentum lookback (trading days)
 MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
-VOL_LOOKBACK = 60                    # Rolling window for volatility scaling
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
 REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
-VOL_REGIME_WINDOW = 20               # Rolling window for per-ETF vol regime detection
 
-# Alt weights: proportional to AdjustedSharpe from etf_evaluation.csv, normalized to sum=1.
-# Higher Sharpe → larger allocation. Range: ~7.5% (lowest) to ~12.3% (highest).
-_ADJ_SHARPE = {
-    '矿业ETF_561330':          1.2548,
-    '浙商之江凤凰ETF_512190':  1.1718,
-    '工程机械ETF_560280':      1.1620,
-    '电信ETF易方达_563010':    1.1351,
-    '半导体设备ETF_561980':    1.0942,
-    '中证2000ETF华夏_562660':  1.0520,
-    '石油ETF_561360':          0.8943,
-    '银行ETF华夏_515020':      0.8776,
-    '沪港深500ETF富国_517100': 0.8129,
-    '中证500ETF国联_515550':   0.7624,
+# Alt weights: proportional to Sharp from etf_evaluation.csv, normalized to sum=1.
+# Higher Sharpe → larger allocation.
+_SHARPE = {
+    '矿业ETF_561330':          1.3210,
+    '浙商之江凤凰ETF_512190':  1.2790,
+    '工程机械ETF_560280':      1.2407,
+    '电信ETF易方达_563010':    1.2091,
+    '半导体设备ETF_561980':    1.1508,
+    '中证2000ETF华夏_562660':  1.1198,
+    '石油ETF_561360':          0.9863,
+    '银行ETF华夏_515020':      1.0061,
+    '沪港深500ETF富国_517100': 0.9297,
+    '中证500ETF国联_515550':   0.8468,
 }
-_total_sharpe = sum(_ADJ_SHARPE.values())
-ALT_WEIGHTS = {name: v / _total_sharpe for name, v in _ADJ_SHARPE.items()}
+_total_sharpe = sum(_SHARPE.values())
+ALT_WEIGHTS = {name: v / _total_sharpe for name, v in _SHARPE.items()}
 
 
 def load_all_data(etf_names):
@@ -147,157 +144,133 @@ def get_rebalance_dates(dates, months):
 
 
 def precompute_indicators(prices):
-    """Vectorize all per-ETF indicator series once using pandas_ta.
+    """Precompute per-ETF MA60 for the absolute trend filter.
 
     Returns:
-      - indicators_arr: float64 array of shape (n_etfs, n_days, 8)
-        Indices: 0=ma5, 1=ma40, 2=ma80, 3=ma120, 4=vol20, 5=std40, 6=std80, 7=std120
-      - vol_medians: float64 array of shape (n_etfs,)
+      - indicators_arr: float64 array of shape (n_etfs, n_days)
+        Each cell is the 60-day SMA for that ETF on that day (0 if not yet available).
     """
     n_days = len(prices)
     n_etfs = len(prices.columns)
-    indicators_arr = np.zeros((n_etfs, n_days, 8))
-    vol_medians = np.zeros(n_etfs)
+    indicators_arr = np.zeros((n_etfs, n_days))
 
     for i, name in enumerate(prices.columns):
         s = prices[name]
-        ret = s.pct_change()
-        indicators_arr[i, :, 0] = ta.sma(s, length=5).fillna(0).values
-        indicators_arr[i, :, 1] = ta.sma(s, length=40).fillna(0).values
-        indicators_arr[i, :, 2] = ta.sma(s, length=80).fillna(0).values
-        indicators_arr[i, :, 3] = ta.sma(s, length=120).fillna(0).values
-        
-        vol20 = ret.rolling(VOL_REGIME_WINDOW).std() * np.sqrt(252)
-        indicators_arr[i, :, 4] = vol20.fillna(0).values
-        vol_medians[i] = vol20.median() if not vol20.dropna().empty else 0.0
+        indicators_arr[i, :] = ta.sma(s, length=MA60_WINDOW).fillna(0).values
 
-        # Precompute rolling STDs for Z-score (using same windows as MAs)
-        indicators_arr[i, :, 5] = s.rolling(40).std().fillna(0).values
-        indicators_arr[i, :, 6] = s.rolling(80).std().fillna(0).values
-        indicators_arr[i, :, 7] = s.rolling(120).std().fillna(0).values
-
-    return indicators_arr, vol_medians
+    return indicators_arr
 
 
 @njit
 def jit_backtest_core(
-    prices_arr, daily_returns_arr, weak_market_arr, indicators_arr, vol_medians,
-    defensive_mask, n_days, n_etfs, min_weight, rebalance_threshold, min_hold_days, stamp_duty,
-    vol_regime_window, momentum_window, ma_blend_weights, defensive_multiplier,
-    override_weights_arr=None
+    prices_arr, daily_returns_arr, weak_market_arr, ma60_arr,
+    defensive_mask, n_days, n_etfs, min_weight, rebalance_threshold, min_hold_days,
+    stamp_duty, momentum_window, alpha_strength,
+    base_weights_arr, override_weights_arr=None
 ):
+    """
+    V2 Backtest Core Loop (Numba @njit):
+      - Relative Momentum: rank 20-day returns, Surge Top-3 by (1+alpha), Cut Bottom-3 by (1-alpha)
+      - Trend Filter: if price < MA60, penalize by (1-alpha)
+      - Weak Market: disable Surge, enable Defensive tilt (1+alpha) on 3 defensive ETFs
+      - Aggressive Mode: if not weak for 3 consecutive days, Surge Top-3 by (1 + 1.5*alpha)
+    """
     nav_history = np.zeros(n_days)
     weight_history_vals = np.zeros((n_days, n_etfs))
     rebalance_flags = np.zeros(n_days, dtype=np.bool_)
-    
+
     nav = 1.0
     nav_history[0] = nav
-    
-    # Init first day
+
+    # ── helper inline: compute V2 target weights at row t ──────────────────
+    def compute_v2_weights(t, is_weak, is_aggressive):
+        weights = base_weights_arr.copy()
+
+        # 1. Relative momentum: 20-day returns, ranked cross-sectionally
+        mom_start = max(0, t - momentum_window)
+        mom_ret = np.zeros(n_etfs)
+        for i in range(n_etfs):
+            p0 = prices_arr[mom_start, i]
+            mom_ret[i] = (prices_arr[t, i] / p0 - 1.0) if p0 > 0 else 0.0
+
+        # Argsort ascending => last n are top (highest return)
+        order = np.argsort(mom_ret)   # ascending
+
+        if is_weak:
+            # Weak market: disable momentum surge; only defensive tilt active
+            for i in range(n_etfs):
+                if defensive_mask[i]:
+                    weights[i] *= (1.0 + alpha_strength)
+        else:
+            # Normal or Aggressive: apply momentum tilt
+            surge = (1.0 + 1.5 * alpha_strength) if is_aggressive else (1.0 + alpha_strength)
+            cut   = (1.0 - alpha_strength)
+            # Bottom-3: indices order[0], order[1], order[2]
+            for k in range(3):
+                weights[order[k]] *= cut
+            # Top-3: indices order[-1], order[-2], order[-3]
+            for k in range(3):
+                weights[order[n_etfs - 1 - k]] *= surge
+
+        # 2. Absolute trend filter: price < MA60 → penalize
+        for i in range(n_etfs):
+            ma60_val = ma60_arr[i, t]
+            if ma60_val > 0 and prices_arr[t, i] < ma60_val:
+                weights[i] *= (1.0 - alpha_strength)
+
+        # 3. Normalize with MIN_WEIGHT floor
+        floored = np.maximum(weights, min_weight)
+        total = np.sum(floored)
+        return floored / total
+
+    # ── init day 0 ─────────────────────────────────────────────────────────
     if override_weights_arr is not None:
         current_weights = override_weights_arr.copy()
     else:
-        # Initial scoring logic (expanded to avoid sub-function overhead in JIT for now)
-        scores = np.zeros(n_etfs)
-        for i in range(n_etfs):
-            current = prices_arr[0, i]
-            short_vol = indicators_arr[i, 0, 4]
-            median_vol = vol_medians[i]
-            
-            if short_vol >= median_vol:
-                scores[i] = 0.0 # simplified for index 0
-            else:
-                blended_z = 0.0
-                # ma40=1, ma80=2, ma120=3; std40=5, std80=6, std120=7
-                for k in range(3):
-                    ma_val = indicators_arr[i, 0, k+1]
-                    std_val = indicators_arr[i, 0, k+5]
-                    if ma_val > 0 and std_val > 0:
-                        blended_z += ma_blend_weights[k] * (ma_val - current) / std_val
-                scores[i] = blended_z
-                
-                ma5_val = indicators_arr[i, 0, 0]
-                if ma5_val > 0 and current < ma5_val:
-                    scores[i] *= 0.5
-        
-        min_score = np.min(scores)
-        shifted = scores - min_score + 0.1
-        if weak_market_arr[0]:
-            for i in range(n_etfs):
-                if defensive_mask[i]:
-                    shifted[i] *= defensive_multiplier
-        
-        total = np.sum(shifted)
-        raw = shifted / total
-        floored = np.maximum(raw, min_weight)
-        current_weights = floored / np.sum(floored)
+        current_weights = compute_v2_weights(0, bool(weak_market_arr[0]), False)
 
     weight_history_vals[0] = current_weights
     holdings = nav * current_weights
     n_trades = 0
     days_since_rebalance = min_hold_days
+    consecutive_non_weak = 0  # tracks streak of non-weak days for aggressive mode
 
+    # ── main loop ──────────────────────────────────────────────────────────
     for t in range(1, n_days):
-        # Update holdings with returns
+        # Update holdings with daily returns
         for i in range(n_etfs):
             holdings[i] *= (1.0 + daily_returns_arr[t, i])
-        
         nav = np.sum(holdings)
         drifted_w = holdings / nav
-        
-        # Target weights
+
+        # Track weak/non-weak streak
+        if weak_market_arr[t]:
+            consecutive_non_weak = 0
+        else:
+            consecutive_non_weak += 1
+
+        is_aggressive = (consecutive_non_weak >= 3) and not bool(weak_market_arr[t])
+
+        # Compute target weights
         if override_weights_arr is not None:
             target_weights = override_weights_arr
         else:
-            scores = np.zeros(n_etfs)
-            for i in range(n_etfs):
-                current = prices_arr[t, i]
-                short_vol = indicators_arr[i, t, 4]
-                median_vol = vol_medians[i]
-                
-                if short_vol >= median_vol:
-                    mom_start = max(0, t - momentum_window)
-                    p_start = prices_arr[mom_start, i]
-                    scores[i] = (current / p_start - 1.0) if p_start > 0 else 0.0
-                else:
-                    blended_z = 0.0
-                    for k in range(3):
-                        ma_val = indicators_arr[i, t, k+1]
-                        std_val = indicators_arr[i, t, k+5]
-                        if ma_val > 0 and std_val > 0:
-                            blended_z += ma_blend_weights[k] * (ma_val - current) / std_val
-                    scores[i] = blended_z
-                    ma5_val = indicators_arr[i, t, 0]
-                    if ma5_val > 0 and current < ma5_val:
-                        scores[i] *= 0.5
-            
-            min_score = np.min(scores)
-            shifted = scores - min_score + 0.1
-            if weak_market_arr[t]:
-                for i in range(n_etfs):
-                    if defensive_mask[i]:
-                        shifted[i] *= defensive_multiplier
-            
-            total = np.sum(shifted)
-            raw = shifted / total
-            floored = np.maximum(raw, min_weight)
-            target_weights = floored / np.sum(floored)
+            target_weights = compute_v2_weights(t, bool(weak_market_arr[t]), is_aggressive)
 
-        # Deviation
+        # Check deviation and cooldown
         max_dev = 0.0
         for i in range(n_etfs):
             dev = abs(drifted_w[i] - target_weights[i])
             if dev > max_dev:
                 max_dev = dev
-        
+
         if max_dev > rebalance_threshold and days_since_rebalance >= min_hold_days:
-            # Rebalance
+            # Stamp duty on sold portion
             stamp_cost = 0.0
             for i in range(n_etfs):
                 new_val = nav * target_weights[i]
                 if holdings[i] > new_val:
                     stamp_cost += stamp_duty * (holdings[i] - new_val)
-            
             nav -= stamp_cost
             current_weights = target_weights
             holdings = nav * current_weights
@@ -307,50 +280,52 @@ def jit_backtest_core(
             days_since_rebalance = 0
         else:
             days_since_rebalance += 1
-            # In the original, weight_history only appends on rebalance.
-            # To maintain compatibility, we'll return rebalance_flags.
-            
+
         nav_history[t] = nav
 
     return nav_history, weight_history_vals, rebalance_flags, n_trades
 
 
-def run_backtest(prices, rf_daily, market_data, indicators_setup, override_weights=None):
+def run_backtest(prices, rf_daily, market_data, ma60_arr, base_weights=None, override_weights=None):
     """
-    Run the backtest with dynamic threshold-based rebalancing, optimized by Numba.
+    Run the backtest with V2 regime logic, optimized by Numba @njit.
+    base_weights: dict of {etf_name -> weight} used as starting allocation (default: equal).
+    override_weights: if set, skip regime model and use these fixed weights.
     """
-    indicators_arr, vol_medians = indicators_setup
     etf_names = prices.columns.tolist()
-    prices_arr = prices.values
-    daily_returns_arr = prices.pct_change().fillna(0).values
+    prices_arr = prices.values.astype(np.float64)
+    daily_returns_arr = prices.pct_change().fillna(0).values.astype(np.float64)
     weak_market_arr = market_data['weak_market'].reindex(prices.index).fillna(False).values.astype(np.bool_)
-    
     defensive_mask = np.array([name in DEFENSIVE_ETFS for name in etf_names], dtype=np.bool_)
-    
-    ov_weights_arr = None
+
+    if base_weights is None:
+        base_weights = {name: 1.0 / len(etf_names) for name in etf_names}
+    bw_arr = np.array([base_weights.get(name, 1.0 / len(etf_names)) for name in etf_names], dtype=np.float64)
+    # Normalize base weights
+    bw_arr = bw_arr / bw_arr.sum()
+
+    ov_arr = None
     if override_weights is not None:
-        ov_weights_arr = np.array([override_weights.get(name, 0.0) for name in etf_names])
+        ov_arr = np.array([override_weights.get(name, 0.0) for name in etf_names], dtype=np.float64)
 
     nav_hist, weight_hist_vals, rebalance_flags, n_trades = jit_backtest_core(
-        prices_arr, daily_returns_arr, weak_market_arr, indicators_arr, vol_medians,
-        defensive_mask, len(prices), len(etf_names), MIN_WEIGHT, REBALANCE_THRESHOLD, 
-        MIN_HOLD_DAYS, STAMP_DUTY, VOL_REGIME_WINDOW, MOMENTUM_WINDOW, 
-        np.array(MA_BLEND_WEIGHTS), DEFENSIVE_MULTIPLIER, ov_weights_arr
+        prices_arr, daily_returns_arr, weak_market_arr, ma60_arr,
+        defensive_mask, len(prices), len(etf_names), MIN_WEIGHT, REBALANCE_THRESHOLD,
+        MIN_HOLD_DAYS, STAMP_DUTY, MOMENTUM_WINDOW, ALPHA_STRENGTH,
+        bw_arr, ov_arr
     )
-    
-    # Format outputs back to Pandas
+
     nav_series = pd.Series(nav_hist, index=prices.index)
-    
-    weight_history = []
-    # Include initial weight
-    weight_history.append({'date': prices.index[0], 'weights': dict(zip(etf_names, weight_hist_vals[0]))})
-    
-    # Include subsequent rebalances
+
+    weight_history = [{'date': prices.index[0], 'weights': dict(zip(etf_names, weight_hist_vals[0]))}]
     for t in range(1, len(prices)):
         if rebalance_flags[t]:
             weight_history.append({'date': prices.index[t], 'weights': dict(zip(etf_names, weight_hist_vals[t]))})
 
     return nav_series, weight_history, n_trades
+
+
+
 
 
 def compute_metrics(nav_series, rf_daily):
@@ -393,32 +368,34 @@ def compute_metrics(nav_series, rf_daily):
     }
 
 
-def print_results(equalw_nav, regime_nav, bench_nav,
-                  regime_wh, rf_daily, n_trades, n_weak_days, n_total_days):
-    """Print 2-strategy performance comparison and diagnostics."""
+def print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
+                  regime_wh, altw_regime_wh, rf_daily, n_trades_eq, n_trades_alt, n_weak_days, n_total_days):
+    """Print 4-strategy performance comparison and diagnostics."""
     eq_m = compute_metrics(equalw_nav, rf_daily)
     rg_m = compute_metrics(regime_nav, rf_daily)
+    aw_m = compute_metrics(altw_nav, rf_daily)
+    ar_m = compute_metrics(altw_regime_nav, rf_daily)
     bn_m = compute_metrics(bench_nav,  rf_daily)
 
-    COL = 14
-    print("\n" + "=" * 70)
-    print("  PERFORMANCE COMPARISON  (2 strategies + CSI300 benchmark)")
-    print("=" * 70)
-    print(f"\n{'Metric':<20} {'EqualW':>{COL}} {'Regime+Def':>{COL}} {'CSI300':>{COL}}")
-    print("-" * 70)
+    COL = 12
+    print("\n" + "=" * 85)
+    print("  PERFORMANCE COMPARISON  (4 strategies + CSI300 benchmark)")
+    print("=" * 85)
+    print(f"\n{'Metric':<18} {'EqualW':>{COL}} {'Regime+Def':>{COL}} {'AltW':>{COL}} {'AltW+Reg':>{COL}} {'CSI300':>{COL}}")
+    print("-" * 85)
     for key in eq_m:
-        print(f"{key:<20} {eq_m[key]:>{COL}} {rg_m[key]:>{COL}} {bn_m[key]:>{COL}}")
+        print(f"{key:<18} {eq_m[key]:>{COL}} {rg_m[key]:>{COL}} {aw_m[key]:>{COL}} {ar_m[key]:>{COL}} {bn_m[key]:>{COL}}")
 
     # Diagnostics
-    print(f"\n  Rebalance trades fired : {n_trades}")
+    print(f"\n  Rebalance trades fired : {n_trades_eq} (Eq Base) | {n_trades_alt} (Alt Base)")
     print(f"  Weak market days       : {n_weak_days}/{n_total_days} ({n_weak_days/n_total_days:.1%})")
 
     # Compact weight history
     etf_short = {n: n.split('_')[0][:6] for n in PORTFOLIO_ETFS}
-    print(f"\n{'=' * 70}")
-    print("  WEIGHT ALLOCATION — Regime+Defensive (last 10 rebalances shown)")
-    print("=" * 70)
-    for entry in regime_wh[-10:]:
+    print(f"\n{'=' * 85}")
+    print("  WEIGHT ALLOCATION — AltW+Regime (last 10 rebalances shown)")
+    print("=" * 85)
+    for entry in altw_regime_wh[-10:]:
         date = entry['date']
         weights = entry['weights']
         sorted_w = sorted(weights.items(), key=lambda x: x[1], reverse=True)
@@ -431,6 +408,8 @@ def print_results(equalw_nav, regime_nav, bench_nav,
     nav_compare = pd.DataFrame({
         'equalw_nav':  equalw_nav,
         'regime_nav':  regime_nav,
+        'altw_nav': altw_nav,
+        'altw_regime_nav': altw_regime_nav,
         'benchmark_nav': bench_nav,
     })
     output_path = os.path.join(BASE_DIR, 'backtest_results.csv')
@@ -450,11 +429,11 @@ def load_benchmark(dates):
 
 
 def main():
-    print("  Portfolio Backtest — Regime+Defensive Strategy")
-    print(f"  Params: MA={MA_WINDOWS}/{MA_BLEND_WEIGHTS} Mom={MOMENTUM_WINDOW}d "
-          f"Vol={VOL_LOOKBACK}d MinW={MIN_WEIGHT} Thresh={REBALANCE_THRESHOLD} Stamp={STAMP_DUTY}")
+    print("  Portfolio Backtest — V2 Relative Momentum + Defensive Strategy")
+    print(f"  Params: Mom={MOMENTUM_WINDOW}d MA60={MA60_WINDOW}d MinW={MIN_WEIGHT} "
+          f"AlphaStr={ALPHA_STRENGTH} Thresh={REBALANCE_THRESHOLD} Stamp={STAMP_DUTY}")
     print(f"  Defensive ETFs: {[e.split('_')[0] for e in DEFENSIVE_ETFS]} "
-          f"(multiplier={DEFENSIVE_MULTIPLIER}x in weak market)")
+          f"(boost={1+ALPHA_STRENGTH:.1f}x in weak market, aggressive={1+1.5*ALPHA_STRENGTH:.2f}x after 3 non-weak days)")
 
     # 1. Load ETF prices, risk-free rate, market regime data
     print("\n[1] Loading data...")
@@ -464,31 +443,43 @@ def main():
     print(f"    Price data : {prices.index[0].date()} → {prices.index[-1].date()}, {len(prices)} days")
     print(f"    ETFs       : {len(prices.columns)}")
 
-    # 2. Precompute per-ETF indicator tables (pandas_ta, done once)
+    # 2. Precompute per-ETF MA60 tables (pandas_ta, done once)
     print("[2] Precomputing indicators...")
-    indicators = precompute_indicators(prices)
+    ma60_arr = precompute_indicators(prices)
 
-    # 3. Strategy 1: Equal weight baseline (static, threshold-triggered rebalance)
+    # 3. Strategy 1: Equal weight baseline (static, no regime model)
     print("[3] Running Equal Weight strategy...")
     equal_weights = {name: 1.0 / len(PORTFOLIO_ETFS) for name in PORTFOLIO_ETFS}
-    equalw_nav, _, _ = run_backtest(prices, rf_daily, market_data, indicators,
+    equalw_nav, _, _ = run_backtest(prices, rf_daily, market_data, ma60_arr,
                                     override_weights=equal_weights)
 
-    # 4. Strategy 2: Regime + Defensive tilt (dynamic weights)
-    print("[4] Running Regime+Defensive strategy...")
-    regime_nav, regime_wh, n_trades = run_backtest(prices, rf_daily, market_data, indicators)
+    # 4. Strategy 2: Equal Base + V2 Regime model
+    print("[4] Running Equal Base + Regime strategy...")
+    regime_nav, regime_wh, n_trades_eq = run_backtest(prices, rf_daily, market_data, ma60_arr,
+                                                       base_weights=equal_weights)
 
-    # 5. Load CSI300 benchmark
+    # 5. Strategy 3: Alt Weight baseline (static, Sharpe-proportional)
+    print("[5] Running Alt Weight strategy...")
+    altw_nav, _, _ = run_backtest(prices, rf_daily, market_data, ma60_arr,
+                                  override_weights=ALT_WEIGHTS)
+
+    # 6. Strategy 4: Alt Base + V2 Regime model
+    print("[6] Running Alt Base + Regime strategy...")
+    altw_regime_nav, altw_regime_wh, n_trades_alt = run_backtest(prices, rf_daily, market_data, ma60_arr,
+                                                                   base_weights=ALT_WEIGHTS)
+
+    # 7. Load CSI300 benchmark
     bench_nav = load_benchmark(equalw_nav.index)
 
-    # 6. Count weak-market days (for diagnostics)
+    # 8. Count weak-market days (for diagnostics)
     price_dates = prices.index
     weak_flags = market_data['weak_market'].reindex(price_dates).fillna(False)
     n_weak_days = int(weak_flags.sum())
 
-    # 7. Print results
-    print_results(equalw_nav, regime_nav, bench_nav,
-                  regime_wh, rf_daily, n_trades, n_weak_days, len(prices))
+    # 9. Print results
+    print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
+                  regime_wh, altw_regime_wh, rf_daily, n_trades_eq, n_trades_alt, n_weak_days, len(prices))
+
 
 
 if __name__ == "__main__":

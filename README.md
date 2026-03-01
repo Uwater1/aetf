@@ -54,80 +54,43 @@ These 10 ETFs are selected for the backtest portfolio based on their performance
 
 ## 📈 Portfolio Backtest (`backtest.py`)
 
-The `backtest.py` script runs a portfolio backtest implementing a custom Alpha Model designed to dynamically adjust ETF weighting.
+The `backtest.py` script implements a high-performance, Numba-optimized portfolio simulation using a **Relative Momentum & Trend-Filtering** alpha model.
 
-### Alpha Model Strategy
-1. **Value Signal**: Z-score mean-reversion across multiple moving average timeframes (40, 80, 120 days). It favors historically undervalued ETFs.
-2. **Volatility Scaling**: Inverse-volatility weighting is used to equalize risk contributions across ETFs.
-3. **Adaptive Momentum Guard**: Dynamic per-ETF thresholds (`k × rolling_std`) to enforce trend robustness.
-    - *Strong rally*: Prevents the model from reducing the ETF's weight below its baseline.
-    - *Strong crash*: Limits the ETF to the minimum weight to avoid catching falling knives.
+### Alpha Model Strategy (V2)
 
-**Rebalance frequency**: Quarterly (February, May, August, November).
+1.  **Base-Weight Anchoring**: Strategies start from either **Equal Weights** (10% each) or **Alt Weights** (Sharpe-proportional from `etf_evaluation.csv`).
+2.  **Relative Momentum Tilt**: Calculated daily based on 20-day returns.
+    *   **Surge**: Top 3 momentum winners gain `+ALPHA_STRENGTH` (e.g., 1.5x weight).
+    *   **Cut**: Bottom 3 momentum losers are penalized by `-ALPHA_STRENGTH` (e.g., 0.5x weight).
+3.  **Absolute Trend Filter**: If an ETF's price is below its **60-day Moving Average (MA60)**, its weight is penalized by `1 - ALPHA_STRENGTH` to avoid "falling knives."
+4.  **Market Regime Overrides**:
+    *   **Weak Market** (`CSI300 < EMA60` & `Volume MA5 < MA60`): Momentum surges are DISABLED. Instead, defensive ETFs (银行, 浙商, 石油) receive a `1 + ALPHA_STRENGTH` boost.
+    *   **Aggressive Mode**: If the market has been "non-weak" for ≥3 consecutive days, the Top 3 surge multiplier increases to `1 + 1.5 * ALPHA_STRENGTH`.
+5.  **Dynamic Rebalancing**: Weights drift daily with market price. Trades (0.1% stamp duty) trigger only when:
+    *   Max weight deviation across any ETF exceeds **10%**.
+    *   A **5-day minimum cooldown** between trades has passed.
 
-### Additional improvement 
-- Defensive ETF tilt — 银行ETF华夏, 浙商之江凤凰ETF, 石油ETF get a 1.5× score multiplier when both CSI300 < EMA(60) and Volume MA(5) < Volume MA(60) are true.
-- Dynamic rebalancing — daily weight calculation, trade only when any ETF deviates >5% from target.
-- Per-ETF regime scoring — low-vol → mean-reversion (buy the dip), high-vol → momentum (buy the winner).
+### Performance Results (V2)
+
+The V2 strategy significantly outperforms the EqualW baseline and the CSI300 benchmark.
+
+| Metric | EqualW | Regime+Def | AltW | **AltW+Regime** | CSI300 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Total Return** | 85.30% | 88.65% | 88.91% | **98.64%** | 38.44% |
+| **CAGR** | 32.26% | 33.33% | 33.42% | **36.49%** | 15.88% |
+| **Sharpe** | 1.449 | 1.466 | 1.472 | **1.521** | 0.764 |
+| **Sortino** | 1.961 | 1.943 | 1.998 | **2.042** | 1.042 |
+| **Max DD** | -14.75% | -15.29% | -14.91% | **-16.04%** | -18.67% |
+| **Trades** | — | 45 | — | **54** | — |
 
 ### Execution
+
 ```bash
 python backtest.py
 ```
 
-```md
-  Portfolio Backtest — 4 Strategies
-  Params: MA=[40, 80, 120]/[0.3, 0.4, 0.3] Mom=20d(k=1.3) Vol=60d MinW=0.03 Signal=0.2 Stamp=0.001
+*Daily NAV history and weight allocations are saved to `backtest_results.csv`.*
 
-[1] Loading ETF data...
-    Price data: 2023-10-27 → 2026-02-24, 556 days
-    ETFs: 10
-
-================================================================================
-  PERFORMANCE COMPARISON  (4 strategies + CSI300 benchmark)
-================================================================================
-
-Metric                      EqualW  EqualW+Alpha          AltW    AltW+Alpha        CSI300
---------------------------------------------------------------------------------
-Total Return                87.62%        82.50%        92.38%        85.79%        38.22%
-CAGR                        33.21%        31.54%        34.74%        32.62%        15.89%
-Sharpe                       1.483         1.445         1.510         1.466         0.763
-Sortino                      2.009         1.911         2.063         1.949         1.041
-Volatility                  19.27%        18.85%        19.74%        19.18%        19.10%
-Max Drawdown               -14.79%       -13.55%       -15.12%       -13.75%       -18.67%
-Calmar                       2.246         2.328         2.297         2.372         0.852
-Trading Days                   553           553           553           553           553
-
-================================================================================
-  WEIGHT ALLOCATION — EqualW+Alpha
-================================================================================
-  2023-11-01 | Top: 浙商之江凤凰=14%, 工程机械ET=11%, 中证500E=11% | Bot: 银行ETF华=9%, 半导体设备E=8%, 中证2000=8% | Spread: 5.7%
-  2024-02-01 | Top: 浙商之江凤凰=17%, 石油ETF=15%, 工程机械ET=15% | Bot: 中证2000=5%, 沪港深500=5%, 中证500E=5% | Spread: 12.1%
-  2024-05-06 | Top: 银行ETF华=11%, 电信ETF易=11%, 石油ETF=11% | Bot: 中证2000=10%, 工程机械ET=9%, 沪港深500=8% | Spread: 3.0%
-  2024-08-01 | Top: 沪港深500=12%, 石油ETF=11%, 中证500E=11% | Bot: 电信ETF易=9%, 银行ETF华=9%, 半导体设备E=8% | Spread: 3.6%
-  2024-11-01 | Top: 石油ETF=13%, 银行ETF华=12%, 沪港深500=10% | Bot: 中证500E=9%, 工程机械ET=9%, 浙商之江凤凰=9% | Spread: 5.0%
-  2025-02-05 | Top: 石油ETF=13%, 浙商之江凤凰=11%, 中证500E=10% | Bot: 半导体设备E=9%, 中证2000=9%, 银行ETF华=8% | Spread: 5.2%
-  2025-05-06 | Top: 石油ETF=12%, 浙商之江凤凰=11%, 中证500E=11% | Bot: 工程机械ET=9%, 半导体设备E=9%, 中证2000=8% | Spread: 4.3%
-  2025-08-01 | Top: 银行ETF华=13%, 石油ETF=12%, 半导体设备E=10% | Bot: 浙商之江凤凰=9%, 电信ETF易=9%, 矿业ETF=8% | Spread: 4.6%
-  2025-11-03 | Top: 银行ETF华=14%, 沪港深500=11%, 工程机械ET=10% | Bot: 电信ETF易=9%, 半导体设备E=9%, 矿业ETF=9% | Spread: 5.0%
-  2026-02-02 | Top: 沪港深500=13%, 石油ETF=11%, 工程机械ET=11% | Bot: 中证2000=10%, 矿业ETF=10%, 银行ETF华=3% | Spread: 10.0%
-
-================================================================================
-  WEIGHT ALLOCATION — AltW+Alpha
-================================================================================
-  2023-11-01 | Top: 浙商之江凤凰=15%, 工程机械ET=12%, 矿业ETF=12% | Bot: 中证2000=8%, 沪港深500=8%, 银行ETF华=8% | Spread: 7.2%
-  2024-02-01 | Top: 浙商之江凤凰=18%, 工程机械ET=17%, 电信ETF易=16% | Bot: 中证2000=4%, 沪港深500=4%, 中证500E=4% | Spread: 13.7%
-  2024-05-06 | Top: 矿业ETF=12%, 电信ETF易=12%, 浙商之江凤凰=11% | Bot: 石油ETF=10%, 中证500E=8%, 沪港深500=7% | Spread: 5.4%
-  2024-08-01 | Top: 矿业ETF=12%, 工程机械ET=11%, 浙商之江凤凰=11% | Bot: 中证500E=9%, 半导体设备E=9%, 银行ETF华=8% | Spread: 3.7%
-  2024-11-01 | Top: 石油ETF=13%, 矿业ETF=11%, 银行ETF华=11% | Bot: 浙商之江凤凰=10%, 沪港深500=8%, 中证500E=7% | Spread: 5.4%
-  2025-02-05 | Top: 石油ETF=12%, 浙商之江凤凰=12%, 矿业ETF=11% | Bot: 中证500E=8%, 沪港深500=8%, 银行ETF华=7% | Spread: 5.3%
-  2025-05-06 | Top: 浙商之江凤凰=12%, 石油ETF=11%, 矿业ETF=11% | Bot: 银行ETF华=8%, 中证2000=8%, 沪港深500=8% | Spread: 4.4%
-  2025-08-01 | Top: 银行ETF华=12%, 石油ETF=11%, 半导体设备E=11% | Bot: 电信ETF易=10%, 沪港深500=8%, 中证500E=7% | Spread: 4.7%
-  2025-11-03 | Top: 银行ETF华=13%, 工程机械ET=11%, 浙商之江凤凰=11% | Bot: 沪港深500=9%, 石油ETF=9%, 中证500E=8% | Spread: 4.8%
-  2026-02-02 | Top: 工程机械ET=12%, 矿业ETF=12%, 沪港深500=11% | Bot: 石油ETF=10%, 中证500E=8%, 银行ETF华=3% | Spread: 8.5%
-
-Daily NAV saved to: /home/hallo/Documents/aetf/backtest_results.csv
-```
 
 ## 📋 TODO
 * Improve switching time selection (改善再平衡择时)
