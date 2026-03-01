@@ -85,6 +85,9 @@ Volatility               19.21%       20.17%       19.55%       19.84%       19.
 Max Drawdown            -14.75%      -14.73%      -14.91%      -15.55%      -18.67%
 Calmar                    2.187        2.303        2.242        2.339        0.851
 Trading Days                556          556          556          556          556
+
+  Rebalance trades fired : 39 (Eq Base) | 35 (Alt Base)
+  Weak market days       : 129/556 (23.2%)
 '''
 ### Execution
 
