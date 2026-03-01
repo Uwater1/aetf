@@ -85,8 +85,6 @@ _total_sharpe = sum(_SHARPE.values())
 ALT_WEIGHTS = {name: v / _total_sharpe for name, v in _SHARPE.items()}
 
 
-
-
 def load_market_data():
     """Load CSI300 prices + volume data, precompute regime indicators via pandas_ta.
 

@@ -44,7 +44,7 @@ def load_adj_close_series(folder):
     return series, meta
 
 
-def find_correlated_groups(series, threshold=0.995):
+def find_correlated_groups(series, threshold=0.5):
     """Find groups of ETFs with pairwise correlation > threshold."""
     names = list(series.keys())
     n = len(names)
@@ -53,8 +53,8 @@ def find_correlated_groups(series, threshold=0.995):
     print(f"Building correlation matrix for {n} series...")
     combined = pd.DataFrame(series)
 
-    # Use pairwise complete observations for correlation
-    corr_matrix = combined.corr(min_periods=100)
+    # Use returns (pct_change) for correlation, as price levels lead to spurious correlation
+    corr_matrix = combined.pct_change().corr(min_periods=100)
 
     # Find pairs above threshold
     pairs = []
@@ -149,7 +149,7 @@ def pick_best(group, meta, series):
 
 def main():
     selected_dir = 'selected'
-    output_dir = 'selected2'
+    output_dir = 'selected_test'
 
     if not os.path.isdir(selected_dir):
         print(f"Error: '{selected_dir}' folder not found.")
@@ -160,8 +160,9 @@ def main():
     # 1. Load all series
     series, meta = load_adj_close_series(selected_dir)
 
-    # 2. Find correlated groups
-    multi_groups, singletons, pairs = find_correlated_groups(series, threshold=0.998)
+    # 2. Find correlated groups (using a threshold, e.g., 0.90 for returns correlation)
+    CORR_THRESHOLD = 0.90
+    multi_groups, singletons, pairs = find_correlated_groups(series, threshold=CORR_THRESHOLD)
 
     # 3. Print correlated groups for review
     print("\n=== Correlated Groups ===")
