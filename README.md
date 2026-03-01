@@ -74,15 +74,18 @@ The `backtest.py` script implements a high-performance, Numba-optimized portfoli
 
 The V2 strategy significantly outperforms the EqualW baseline and the CSI300 benchmark.
 
-| Metric | EqualW | Regime+Def | AltW | **AltW+Regime** | CSI300 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Total Return** | 85.30% | 88.65% | 88.91% | **98.64%** | 38.44% |
-| **CAGR** | 32.26% | 33.33% | 33.42% | **36.49%** | 15.88% |
-| **Sharpe** | 1.449 | 1.466 | 1.472 | **1.521** | 0.764 |
-| **Sortino** | 1.961 | 1.943 | 1.998 | **2.042** | 1.042 |
-| **Max DD** | -14.75% | -15.29% | -14.91% | **-16.04%** | -18.67% |
-| **Trades** | — | 45 | — | **54** | — |
-
+'''
+Metric                   EqualW   Regime+Def         AltW     AltW+Reg       CSI300
+-------------------------------------------------------------------------------------
+Total Return             85.30%       89.01%       88.91%       98.68%       38.44%
+CAGR                     32.26%       33.45%       33.42%       36.50%       15.88%
+Sharpe                    1.449        1.435        1.472        1.528        0.764
+Sortino                   1.961        1.910        1.998        2.021        1.042
+Volatility               19.21%       20.15%       19.55%       20.46%       19.05%
+Max Drawdown            -14.75%      -15.26%      -14.91%      -14.45%      -18.67%
+Calmar                    2.187        2.192        2.242        2.526        0.851
+Trading Days                556          556          556          556          556
+'''
 ### Execution
 
 ```bash
