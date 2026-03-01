@@ -77,16 +77,16 @@ The V2 strategy significantly outperforms the EqualW baseline and the CSI300 ben
 '''
 Metric                   EqualW   Regime+Def         AltW     AltW+Reg       CSI300
 -------------------------------------------------------------------------------------
-Total Return             85.30%       90.49%       88.91%       98.23%       38.44%
-CAGR                     32.26%       33.92%       33.42%       36.36%       15.88%
-Sharpe                    1.449        1.452        1.472        1.564        0.764
-Sortino                   1.961        1.932        1.998        2.070        1.042
-Volatility               19.21%       20.17%       19.55%       19.84%       19.05%
-Max Drawdown            -14.75%      -14.73%      -14.91%      -15.55%      -18.67%
-Calmar                    2.187        2.303        2.242        2.339        0.851
+Total Return             85.30%       91.31%       88.91%      100.22%       38.44%
+CAGR                     32.26%       34.18%       33.42%       36.98%       15.88%
+Sharpe                    1.449        1.488        1.472        1.525        0.764
+Sortino                   1.961        1.971        1.998        2.060        1.042
+Volatility               19.21%       19.75%       19.55%       20.77%       19.05%
+Max Drawdown            -14.75%      -13.71%      -14.91%      -14.72%      -18.67%
+Calmar                    2.187        2.492        2.242        2.512        0.851
 Trading Days                556          556          556          556          556
 
-  Rebalance trades fired : 39 (Eq Base) | 35 (Alt Base)
+  Rebalance trades fired : 30 (Eq Base) | 37 (Alt Base)
   Weak market days       : 129/556 (23.2%)
 '''
 ### Execution

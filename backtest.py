@@ -48,7 +48,7 @@ MA60_WINDOW = 60                     # Absolute trend filter moving average
 MOMENTUM_WINDOW = 20                 # Short-term momentum lookback (trading days)
 MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
-REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
+REBALANCE_THRESHOLD = 0.11           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
 RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
 
@@ -150,7 +150,7 @@ def precompute_indicators(prices):
 
     Returns:
       - indicators_arr: float64 array of shape (n_etfs, n_days)
-        Each cell is the 60-day SMA for that ETF on that day (0 if not yet available).
+        Each cell is the 60-day EMA for that ETF on that day (0 if not yet available).
     """
     n_days = len(prices)
     n_etfs = len(prices.columns)
@@ -223,7 +223,7 @@ def jit_backtest_core(
                 mult = 1.0 + alpha_strength * scale * convex
                 weights[etf_idx] *= mult
 
-        # 2. Absolute trend filter: price < MA60 → penalize
+        # 2. Absolute trend filter: price < EMA60 → penalize
         for i in range(n_etfs):
             ma60_val = ma60_arr[i, t]
             if ma60_val > 0 and prices_arr[t, i] < ma60_val:
