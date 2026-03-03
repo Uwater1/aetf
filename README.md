@@ -75,20 +75,20 @@ The `backtest.py` script implements a high-performance, Numba-optimized portfoli
 
 The V2.1 strategy achieves superior risk-adjusted returns and improved efficiency (lower turnover) compared to V2.
 
-| Metric | EqualW | Regime+Def | AltW | **AltW+Regime** | CSI300 |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Total Return** | 85.30% | 91.31% | 88.91% | **100.22%** | 38.44% |
-| **CAGR** | 32.26% | 34.18% | 33.42% | **36.98%** | 15.88% |
-| **Sharpe** | 1.449 | 1.488 | 1.472 | **1.525** | 0.764 |
-| **Sortino** | 1.961 | 1.971 | 1.998 | **2.060** | 1.042 |
-| **Max DD** | -14.75% | -13.71% | -14.91% | **-14.72%** | -18.67% |
-| **Trades** | — | 30 | — | **37** | — |
-| **Calmar** | 2.187 | 2.492 | 2.242 | **2.512** | 0.851 |
-| **Trading Days** | 556 | 556 | 556 | 556 | 556 |
+| Metric | EqualW | Regime+Def | AltW | AltW+Reg | CSI300 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Total Return | 85.10% | 90.90% | 88.18% | 100.23% | 39.45% |
+| CAGR | 32.19% | 34.05% | 33.18% | 36.98% | 16.27% |
+| Sharpe | 1.527 | 1.540 | 1.550 | 1.666 | 0.915 |
+| Sortino | 2.054 | 2.019 | 2.088 | 2.215 | 1.279 |
+| Volatility | 19.58% | 20.43% | 19.80% | 20.15% | 18.34% |
+| Max Drawdown | -15.16% | -14.75% | -15.16% | -15.27% | -16.47% |
+| Calmar | 2.124 | 2.308 | 2.188 | 2.422 | 0.988 |
+| Trading Days | 556 | 556 | 556 | 556 | 556 |
 
-  Rebalance trades fired : 30 (Eq Base) | 37 (Alt Base)
-  
-  Weak market days       : 129/556 (23.2%)
+- **Rebalance trades fired**: 36 (Eq Base) | 40 (Alt Base)
+- **Weak market days**: 130/556 (23.4%)
+
   
 ### Execution
 
