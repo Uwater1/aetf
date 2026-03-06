@@ -27,6 +27,7 @@ VOLUME_FILE = os.path.join(BASE_DIR, 'volume.csv')
 ANNUAL_RF = 0.0 # Use the old Sharpe ratio
 RF_DAILY = ANNUAL_RF / 250.0
 SHARPE_SPAN = 60                     # Lookback span for dynamic Sharpe weights (EWMA)
+SHARPE_MIN_PERIODS = 20              # Warm-up days before EWMA Sharpe is considered stable
 
 PORTFOLIO_ETFS = [ # A combination of mutiple ETF, to maximize liquidity
     '中证500', 
@@ -69,37 +70,61 @@ def load_all_data(etf_names):
     return prices
 
 
-def precompute_trailing_sharpe_weights(prices, min_periods=20, span=SHARPE_SPAN):
+def precompute_trailing_sharpe_weights(prices, bench_prices, min_periods=SHARPE_MIN_PERIODS, span=SHARPE_SPAN):
     """
     Compute dynamic base weights using an EWMA trailing Sharpe ratio approach.
     Shifted by 1 day so weights for day t only use data up to day t-1 to prevent lookahead bias.
+
+    During the warm-up period (first min_periods days), NaN Sharpe values are pre-filled
+    using each ETF's historical Sharpe differential vs. the peer+benchmark average.
+    This involves a small, bounded lookahead that only affects the first ~20 days.
     """
     daily_returns = prices.pct_change().fillna(0)
     excess_returns = daily_returns - RF_DAILY
-    
-    # EWMA mean and vol
+
+    # ── Step 1: Full-period Sharpe per ETF (used only for pre-fill differential) ──
+    full_sharpe = (excess_returns.mean() / excess_returns.std() * np.sqrt(252)).clip(lower=0)
+
+    # ── Step 2: Benchmark full-period Sharpe ──
+    bench_aligned = bench_prices.reindex(prices.index).ffill()
+    bench_ret = bench_aligned.pct_change().fillna(0) - RF_DAILY
+    bench_sharpe = float(np.clip(bench_ret.mean() / bench_ret.std() * np.sqrt(252), 0, None))
+
+    # ── Step 3: Per-ETF relative differential vs. (peer_avg + benchmark) / 2 ──
+    n = len(prices.columns)
+    sharpe_diff = {}
+    for etf in prices.columns:
+        peer_avg = full_sharpe.drop(index=etf).mean()
+        combined_avg = (peer_avg + bench_sharpe) / 2.0
+        if combined_avg > 0:
+            diff = (float(full_sharpe[etf]) - combined_avg) / combined_avg
+        else:
+            diff = 0.0
+        sharpe_diff[etf] = float(np.clip(diff, -0.5, 0.5))
+
+    # ── Step 4: EWMA Sharpe (with NaN during warm-up) ──
     ewma_mean = excess_returns.ewm(span=span, min_periods=min_periods).mean() * 252
-    ewma_vol = excess_returns.ewm(span=span, min_periods=min_periods).std() * np.sqrt(252)
-    
-    # Calculate Sharpe
-    ewma_sharpe = ewma_mean / ewma_vol
-    ewma_sharpe = ewma_sharpe.fillna(0)
-    
-    # Clip negative Sharpes to 0
-    ewma_sharpe[ewma_sharpe < 0] = 0.0
-    
-    # Sum of Sharpes across ETFs
+    ewma_vol  = excess_returns.ewm(span=span, min_periods=min_periods).std()  * np.sqrt(252)
+    ewma_sharpe = ewma_mean / ewma_vol   # NaN where < min_periods data
+
+    # ── Step 5: Pre-fill NaN cells using daily group mean × (1 + diff_i) ──
+    # For each day that has at least one non-NaN ETF, compute the daily mean
+    # of those ETFs and use each ETF's differential to fill its NaN.
+    daily_group_mean = ewma_sharpe.mean(axis=1)   # mean of non-NaN columns per row
+    for etf in prices.columns:
+        nan_mask = ewma_sharpe[etf].isna()
+        if nan_mask.any():
+            prefill = daily_group_mean[nan_mask] * (1.0 + sharpe_diff[etf])
+            ewma_sharpe.loc[nan_mask, etf] = prefill.clip(lower=0)
+
+    # ── Step 6: Clip negatives, normalize to weights ──
+    ewma_sharpe = ewma_sharpe.fillna(0).clip(lower=0)
     sum_sharpes = ewma_sharpe.sum(axis=1)
-    
-    # Normalize to get weights
-    # Where sum is 0 (e.g., all negative), fallback to equal weight
-    weights = ewma_sharpe.div(sum_sharpes, axis=0)
-    equal_weight = 1.0 / len(prices.columns)
-    weights = weights.fillna(equal_weight)
-    
-    # Extremely important: shift weights forward by 1 so allocation for day t is based on t-1
+    equal_weight = 1.0 / n
+    weights = ewma_sharpe.div(sum_sharpes, axis=0).fillna(equal_weight)
+
+    # Shift by 1: allocation for day t uses only data up to day t-1
     shifted_weights = weights.shift(1).fillna(equal_weight)
-    
     return shifted_weights
 
 # Trailing Shape Weights will be precomputed at runtime in main()
@@ -477,8 +502,14 @@ def main():
     ma60_arr = precompute_indicators(prices)
 
     # Precompute Dynamic Sharpe Weights and Equal Weights DataFrame
-    print("[Pre-3] Computing Trailing Sharpe Base Weights...")
-    alt_weights_df = precompute_trailing_sharpe_weights(prices)
+    print("[Pre-3] Computing Trailing Sharpe Base Weights (with pre-fill)...")
+    # Load benchmark prices aligned to portfolio dates for pre-fill differential
+    bench_path = os.path.join(SELECTED_DIR, f'{BENCHMARK_ETF}.csv')
+    bench_df = pd.read_csv(bench_path)
+    bench_df['date'] = pd.to_datetime(bench_df['date'])
+    bench_df = bench_df.sort_values('date').set_index('date')
+    bench_prices = bench_df['adj_close'].reindex(prices.index).ffill()
+    alt_weights_df = precompute_trailing_sharpe_weights(prices, bench_prices)
     eq_val = 1.0 / len(PORTFOLIO_ETFS)
     eq_weights_df = pd.DataFrame(eq_val, index=prices.index, columns=prices.columns)
     equal_weights = {name: eq_val for name in PORTFOLIO_ETFS}
