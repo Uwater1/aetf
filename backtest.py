@@ -419,7 +419,7 @@ def print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
         'benchmark_nav': bench_nav,
     })
     output_path = os.path.join(BASE_DIR, 'backtest_results.csv')
-    nav_compare.to_csv(output_path)
+    nav_compare.round(5).to_csv(output_path)
     print(f"\nDaily NAV saved to: {output_path}")
 
 
