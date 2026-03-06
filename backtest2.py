@@ -92,7 +92,7 @@ DEFENSIVE_ETFS = ['银行', '浙商凤凰', '石油']
 ALPHA_STRENGTH = 0.4                 # Multiplier offset for Surge/Cut/Defensive
 
 # Alpha model parameters (V2)
-MA60_WINDOW = 60                     # Absolute trend filter moving average
+EMA60_WINDOW = 60                     # Absolute trend filter moving average
 MOMENTUM_WINDOW = 20                 # Short-term momentum lookback (trading days)
 MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
@@ -158,7 +158,7 @@ def get_rebalance_dates(dates, months):
 
 
 def precompute_indicators(prices):
-    """Precompute per-ETF MA60 for the absolute trend filter.
+    """Precompute per-ETF EMA60 for the absolute trend filter.
 
     Returns:
       - indicators_arr: float64 array of shape (n_etfs, n_days)
@@ -170,7 +170,7 @@ def precompute_indicators(prices):
 
     for i, name in enumerate(prices.columns):
         s = prices[name]
-        indicators_arr[i, :] = ta.ema(s, length=MA60_WINDOW).fillna(0).values
+        indicators_arr[i, :] = ta.ema(s, length=EMA60_WINDOW).fillna(0).values
 
     return indicators_arr
 
@@ -455,7 +455,7 @@ def load_benchmark(dates):
 
 def main():
     print("  Portfolio Backtest — V2 Relative Momentum + Defensive Strategy")
-    print(f"  Params: Mom={MOMENTUM_WINDOW}d MA60={MA60_WINDOW}d MinW={MIN_WEIGHT} "
+    print(f"  Params: Mom={MOMENTUM_WINDOW}d MA60={EMA60_WINDOW}d MinW={MIN_WEIGHT} "
           f"AlphaStr={ALPHA_STRENGTH} Thresh={REBALANCE_THRESHOLD} Stamp={STAMP_DUTY}")
     print(f"  Convex Soft Rank: power={RANK_POWER} best={1+ALPHA_STRENGTH:.2f}x worst={1-ALPHA_STRENGTH:.2f}x "
           f"(aggressive scale=1.5x after 3 non-weak days)")
