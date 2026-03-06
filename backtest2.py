@@ -15,10 +15,14 @@ Benchmark: Equal-weight portfolio (10% each)
 """
 
 import os
+import warnings
 import pandas as pd
 import numpy as np
 import pandas_ta as ta
 from numba import njit
+
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid value encountered')
+warnings.filterwarnings('ignore', category=FutureWarning, message='Downcasting object dtype')
 # ─── Configuration ───────────────────────────────────────────────────────────
 BASE_DIR = '/home/hallo/Documents/aetf'
 SELECTED_DIR = os.path.join(BASE_DIR, 'selected3')
@@ -57,8 +61,14 @@ RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrate
 
 
 
-def load_all_data(etf_names):
-    """Load adj_close for all ETFs into a single DataFrame, aligned by date."""
+def load_all_data(etf_names, warmup_days=60):
+    """Load adj_close for all ETFs.
+
+    Returns:
+      prices_full : DataFrame indexed by date, NaN where an ETF has not launched yet.
+                    Starts `warmup_days` trading days before the first date all ETFs are available.
+      trade_start : first date when all ETFs have valid prices (the actual backtest start).
+    """
     series = {}
     for name in etf_names:
         filepath = os.path.join(SELECTED_DIR, f'{name}.csv')
@@ -66,8 +76,19 @@ def load_all_data(etf_names):
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values('date').set_index('date')
         series[name] = df['adj_close']
-    prices = pd.DataFrame(series).dropna()  # only dates where ALL ETFs have data
-    return prices
+
+    # Union of all dates (each ETF keeps its own history; NaN where not yet launched)
+    prices_union = pd.DataFrame(series)
+
+    # First date ALL ETFs have data
+    trade_start = prices_union.dropna().index[0]
+
+    # Go back `warmup_days` rows before that date
+    all_dates = prices_union.index[prices_union.index <= trade_start]
+    warmup_start = all_dates[-min(warmup_days + 1, len(all_dates))]
+    prices_full = prices_union.loc[warmup_start:]
+
+    return prices_full, trade_start
 
 
 def precompute_trailing_sharpe_weights(prices, bench_prices, min_periods=SHARPE_MIN_PERIODS, span=SHARPE_SPAN):
@@ -207,7 +228,7 @@ def jit_backtest_core(
     prices_arr, daily_returns_arr, weak_market_arr, ma60_arr,
     defensive_mask, n_days, n_etfs, min_weight, rebalance_threshold, min_hold_days,
     stamp_duty, momentum_window, alpha_strength, rank_power,
-    base_weights_arr, override_weights_arr=None, use_regime=True
+    base_weights_arr, override_weights_arr=None, use_regime=True, trade_start_idx=0
 ):
     """
     V2 Backtest Core Loop (Numba @njit):
@@ -274,10 +295,15 @@ def jit_backtest_core(
         return floored / total
 
     # ── init day 0 ─────────────────────────────────────────────────────────
+    # During the pre-period (t < trade_start_idx): hold NAV=1, skip trading.
+    # Init weights to equal so holding array is valid before trading starts.
+    eq_w = np.full(n_etfs, 1.0 / n_etfs)
     if override_weights_arr is not None:
         current_weights = override_weights_arr.copy()
-    else:
+    elif trade_start_idx == 0:
         current_weights = compute_v2_weights(0, bool(weak_market_arr[0]), False)
+    else:
+        current_weights = eq_w.copy()
 
     weight_history_vals[0] = current_weights
     holdings = nav * current_weights
@@ -287,6 +313,25 @@ def jit_backtest_core(
 
     # ── main loop ──────────────────────────────────────────────────────────
     for t in range(1, n_days):
+        # ── Pre-period: no trading, NAV held at 1.0 ─────────────────────
+        if t < trade_start_idx:
+            nav_history[t] = 1.0
+            weight_history_vals[t] = eq_w
+            continue
+
+        # First day of trading: reset holdings to trade_start weights
+        if t == trade_start_idx:
+            nav = 1.0
+            if override_weights_arr is not None:
+                current_weights = override_weights_arr.copy()
+            else:
+                current_weights = compute_v2_weights(t, bool(weak_market_arr[t]), False)
+            holdings = nav * current_weights
+            weight_history_vals[t] = current_weights
+            nav_history[t] = nav
+            days_since_rebalance = min_hold_days
+            consecutive_non_weak = 0
+            continue
         # Update holdings with daily returns
         for i in range(n_etfs):
             holdings[i] *= (1.0 + daily_returns_arr[t, i])
@@ -340,12 +385,14 @@ def jit_backtest_core(
     return nav_history, weight_history_vals, rebalance_flags, n_trades
 
 
-def run_backtest(prices, market_data, ma60_arr, base_weights_df, override_weights=None, use_regime=True):
+def run_backtest(prices, market_data, ma60_arr, base_weights_df,
+                 override_weights=None, use_regime=True, trade_start_idx=0):
     """
     Run the backtest with V2 regime logic, optimized by Numba @njit.
     base_weights_df: DataFrame of dynamic base weights of shape (n_days, n_etfs).
     override_weights: if set, skip regime model and use these fixed weights.
-    use_regime: if strongly set to False, no alpha momentum or trend filter will be applied.
+    use_regime: if False, no alpha momentum or trend filter is applied.
+    trade_start_idx: row index into prices at which actual trading begins.
     """
     etf_names = prices.columns.tolist()
     prices_arr = prices.values.astype(np.float64)
@@ -363,14 +410,16 @@ def run_backtest(prices, market_data, ma60_arr, base_weights_df, override_weight
         prices_arr, daily_returns_arr, weak_market_arr, ma60_arr,
         defensive_mask, len(prices), len(etf_names), MIN_WEIGHT, REBALANCE_THRESHOLD,
         MIN_HOLD_DAYS, STAMP_DUTY, MOMENTUM_WINDOW, ALPHA_STRENGTH, RANK_POWER,
-        bw_arr, ov_arr, use_regime
+        bw_arr, ov_arr, use_regime, trade_start_idx
     )
 
-    nav_series = pd.Series(nav_hist, index=prices.index)
+    # Trim nav_series to trade window so metrics reflect only live trading
+    nav_series_full = pd.Series(nav_hist, index=prices.index)
+    nav_series = nav_series_full.iloc[trade_start_idx:]
 
-    weight_history = [{'date': prices.index[0], 'weights': dict(zip(etf_names, weight_hist_vals[0]))}]
-    for t in range(1, len(prices)):
-        if rebalance_flags[t]:
+    weight_history = []
+    for t in range(trade_start_idx, len(prices)):
+        if t == trade_start_idx or rebalance_flags[t]:
             weight_history.append({'date': prices.index[t], 'weights': dict(zip(etf_names, weight_hist_vals[t]))})
 
     return nav_series, weight_history, n_trades
@@ -491,60 +540,66 @@ def main():
 
     # 1. Load ETF prices, market regime data
     print("\n[1] Loading data...")
-    prices    = load_all_data(PORTFOLIO_ETFS)
+    prices, trade_start = load_all_data(PORTFOLIO_ETFS, warmup_days=EMA60_WINDOW)
+    trade_start_idx = prices.index.get_loc(trade_start)
     market_data = load_market_data()
-    print(f"    ETFs       : {len(prices.columns)}")
+    print(f"    ETFs        : {len(prices.columns)}")
+    print(f"    Full window : {prices.index[0].date()} -> {prices.index[-1].date()} ({len(prices)} days)")
+    print(f"    Trade start : {trade_start.date()} (idx={trade_start_idx}, warmup={trade_start_idx} days)")
 
-    print(f"    ETFs       : {len(prices.columns)}")
-
-    # 2. Precompute per-ETF MA60 tables (pandas_ta, done once)
+    # 2. Precompute per-ETF EMA60 tables (pandas_ta, done once)
     print("[2] Precomputing indicators...")
-    ma60_arr = precompute_indicators(prices)
+    prices_filled = prices.ffill().fillna(0)
+    ma60_arr = precompute_indicators(prices_filled)
 
     # Precompute Dynamic Sharpe Weights and Equal Weights DataFrame
     print("[Pre-3] Computing Trailing Sharpe Base Weights (with pre-fill)...")
-    # Load benchmark prices aligned to portfolio dates for pre-fill differential
     bench_path = os.path.join(SELECTED_DIR, f'{BENCHMARK_ETF}.csv')
     bench_df = pd.read_csv(bench_path)
     bench_df['date'] = pd.to_datetime(bench_df['date'])
     bench_df = bench_df.sort_values('date').set_index('date')
     bench_prices = bench_df['adj_close'].reindex(prices.index).ffill()
-    alt_weights_df = precompute_trailing_sharpe_weights(prices, bench_prices)
+    alt_weights_df = precompute_trailing_sharpe_weights(prices_filled, bench_prices)
     eq_val = 1.0 / len(PORTFOLIO_ETFS)
     eq_weights_df = pd.DataFrame(eq_val, index=prices.index, columns=prices.columns)
     equal_weights = {name: eq_val for name in PORTFOLIO_ETFS}
 
+    prices_bt = prices_filled  # use filled prices for backtest arrays
+
     # 3. Strategy 1: Equal weight baseline (static, no regime model)
     print("[3] Running Equal Weight strategy...")
-    equalw_nav, _, _ = run_backtest(prices, market_data, ma60_arr, 
-                                    base_weights_df=eq_weights_df, override_weights=equal_weights)
+    equalw_nav, _, _ = run_backtest(prices_bt, market_data, ma60_arr,
+                                    base_weights_df=eq_weights_df, override_weights=equal_weights,
+                                    trade_start_idx=trade_start_idx)
 
     # 4. Strategy 2: Equal Base + V2 Regime model
     print("[4] Running Equal Base + Regime strategy...")
-    regime_nav, regime_wh, n_trades_eq = run_backtest(prices, market_data, ma60_arr, 
-                                                      base_weights_df=eq_weights_df)
+    regime_nav, regime_wh, n_trades_eq = run_backtest(prices_bt, market_data, ma60_arr,
+                                                      base_weights_df=eq_weights_df,
+                                                      trade_start_idx=trade_start_idx)
 
     # 5. Strategy 3: Dynamic Sharpe Weight baseline (no regime model, just dynamic base)
     print("[5] Running Dynamic Trailing Sharpe strategy...")
-    altw_nav, _, _ = run_backtest(prices, market_data, ma60_arr, 
-                                  base_weights_df=alt_weights_df, use_regime=False)
+    altw_nav, _, _ = run_backtest(prices_bt, market_data, ma60_arr,
+                                  base_weights_df=alt_weights_df, use_regime=False,
+                                  trade_start_idx=trade_start_idx)
 
     # 6. Strategy 4: Dynamic Base + V2 Regime model
     print("[6] Running Dynamic Base + Regime strategy...")
-    altw_regime_nav, altw_regime_wh, n_trades_alt = run_backtest(prices, market_data, ma60_arr, 
-                                                                 base_weights_df=alt_weights_df)
+    altw_regime_nav, altw_regime_wh, n_trades_alt = run_backtest(prices_bt, market_data, ma60_arr,
+                                                                 base_weights_df=alt_weights_df,
+                                                                 trade_start_idx=trade_start_idx)
 
-    # 7. Load CSI300 benchmark
+    # 7. Load CSI300 benchmark (aligned to trade window)
     bench_nav = load_benchmark(equalw_nav.index)
 
-    # 8. Count weak-market days (for diagnostics)
-    price_dates = prices.index
-    weak_flags = market_data['weak_market'].reindex(price_dates).fillna(False)
+    # 8. Count weak-market days (trade window only)
+    weak_flags = market_data['weak_market'].reindex(equalw_nav.index).fillna(False)
     n_weak_days = int(weak_flags.sum())
 
     # 9. Print results
     print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
-                  regime_wh, altw_regime_wh, n_trades_eq, n_trades_alt, n_weak_days, len(prices))
+                  regime_wh, altw_regime_wh, n_trades_eq, n_trades_alt, n_weak_days, len(equalw_nav))
 
 
 
