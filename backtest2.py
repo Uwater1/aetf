@@ -55,7 +55,7 @@ EMA60_WINDOW = 60                    # Absolute trend filter moving average
 MOMENTUM_WINDOW = 20                 # Short-term momentum lookback (trading days)
 MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
-REBALANCE_THRESHOLD = 0.11           # Rebalance when max weight deviation > 10%
+REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
 RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
 
