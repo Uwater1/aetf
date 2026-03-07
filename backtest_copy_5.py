@@ -30,11 +30,11 @@ BENCHMARK_ETF = '沪深300'
 VOLUME_FILE = os.path.join(BASE_DIR, 'volume.csv')
 ANNUAL_RF = 0.0 # Use the old Sharpe ratio
 RF_DAILY = ANNUAL_RF / 250.0
-SHARPE_SPAN = 60                     # Lookback span for dynamic Sharpe weights (EWMA)
+SHARPE_SPAN = 40                     # Lookback span for dynamic Sharpe weights (EWMA)
 SHARPE_MIN_PERIODS = 20              # Warm-up days before EWMA Sharpe is considered stable
 
 PORTFOLIO_ETFS = [ # A combination of mutiple ETF, to maximize liquidity
-    '中证500', 
+    '中证500',
     '银行',
     '有色矿业',
     '浙商凤凰',
@@ -605,4 +605,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

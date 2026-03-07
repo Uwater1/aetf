@@ -34,7 +34,7 @@ SHARPE_SPAN = 60                     # Lookback span for dynamic Sharpe weights 
 SHARPE_MIN_PERIODS = 20              # Warm-up days before EWMA Sharpe is considered stable
 
 PORTFOLIO_ETFS = [ # A combination of mutiple ETF, to maximize liquidity
-    '中证500', 
+    '中证500',
     '银行',
     '有色矿业',
     '浙商凤凰',
@@ -52,7 +52,7 @@ ALPHA_STRENGTH = 0.5                 # Multiplier offset for Surge/Cut/Defensive
 
 # Alpha model parameters (V2)
 EMA60_WINDOW = 60                    # Absolute trend filter moving average
-MOMENTUM_WINDOW = 20                 # Short-term momentum lookback (trading days)
+MOMENTUM_WINDOW = 10                 # Short-term momentum lookback (trading days)
 MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
 REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
@@ -605,4 +605,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

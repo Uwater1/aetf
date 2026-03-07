@@ -34,7 +34,7 @@ SHARPE_SPAN = 60                     # Lookback span for dynamic Sharpe weights 
 SHARPE_MIN_PERIODS = 20              # Warm-up days before EWMA Sharpe is considered stable
 
 PORTFOLIO_ETFS = [ # A combination of mutiple ETF, to maximize liquidity
-    '中证500', 
+    '中证500',
     '银行',
     '有色矿业',
     '浙商凤凰',
@@ -48,7 +48,7 @@ PORTFOLIO_ETFS = [ # A combination of mutiple ETF, to maximize liquidity
 
 # Defensive ETFs: proven resilient in downturns
 DEFENSIVE_ETFS = ['银行', '浙商凤凰', '石油']
-ALPHA_STRENGTH = 0.5                 # Multiplier offset for Surge/Cut/Defensive
+ALPHA_STRENGTH = 0.7                 # Multiplier offset for Surge/Cut/Defensive
 
 # Alpha model parameters (V2)
 EMA60_WINDOW = 60                    # Absolute trend filter moving average
@@ -605,4 +605,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

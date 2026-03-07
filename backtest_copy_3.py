@@ -34,7 +34,7 @@ SHARPE_SPAN = 60                     # Lookback span for dynamic Sharpe weights 
 SHARPE_MIN_PERIODS = 20              # Warm-up days before EWMA Sharpe is considered stable
 
 PORTFOLIO_ETFS = [ # A combination of mutiple ETF, to maximize liquidity
-    '中证500', 
+    '中证500',
     '银行',
     '有色矿业',
     '浙商凤凰',
@@ -185,10 +185,9 @@ def load_market_data():
     market['vol_ma5'] = market['vol_ma5'].ffill()
     market['vol_ma60'] = market['vol_ma60'].ffill()
 
-    # Weak market: both conditions must hold
+    # Weak market: just use price trend
     market['weak_market'] = (
-        (market['csi300_close'] < market['csi300_ema60']) &
-        (market['vol_ma5'] < market['vol_ma60'])
+        market['csi300_close'] < market['csi300_ema60']
     )
     return market
 
@@ -605,4 +604,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
