@@ -34,7 +34,7 @@ SHARPE_SPAN = 60                     # Lookback span for dynamic Sharpe weights 
 SHARPE_MIN_PERIODS = 20              # Warm-up days before EWMA Sharpe is considered stable
 
 PORTFOLIO_ETFS = [ # A combination of mutiple ETF, to maximize liquidity
-    '中证500', 
+    '中证500',
     '银行',
     '有色矿业',
     '浙商凤凰',
@@ -57,7 +57,7 @@ MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
 REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
-RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
+RANK_POWER = 1.0                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
 
 
 
@@ -605,4 +605,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
