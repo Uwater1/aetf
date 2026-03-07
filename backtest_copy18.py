@@ -52,7 +52,7 @@ ALPHA_STRENGTH = 0.5                 # Multiplier offset for Surge/Cut/Defensive
 
 # Alpha model parameters (V2)
 EMA60_WINDOW = 60                    # Absolute trend filter moving average
-MOMENTUM_WINDOW = 10                 # Short-term momentum lookback (trading days)
+MOMENTUM_WINDOW = 20                 # Short-term momentum lookback (trading days)
 MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
 REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
@@ -185,10 +185,9 @@ def load_market_data():
     market['vol_ma5'] = market['vol_ma5'].ffill()
     market['vol_ma60'] = market['vol_ma60'].ffill()
 
-    # Weak market: both conditions must hold
+    # Weak market: just use price trend
     market['weak_market'] = (
-        (market['csi300_close'] < market['csi300_ema60']) &
-        (market['vol_ma5'] < market['vol_ma60'])
+        market['csi300_close'] < market['csi300_ema60']
     )
     return market
 
@@ -355,6 +354,21 @@ def jit_backtest_core(
             target_weights = floored / np.sum(floored)
         else:
             target_weights = compute_v2_weights(t, bool(weak_market_arr[t]), is_aggressive)
+
+            # Additional layer: Cash / Defensive shift based on short-term trend
+            # If the market is extremely weak (e.g. CSI300 < EMA60 AND CSI300 < EMA20),
+            # shift even more heavily to defensive ETFs or reduce total exposure (cash equivalent).
+            # Since we don't have cash in n_etfs, we simply boost defensives further.
+            market_weak = bool(weak_market_arr[t])
+            if market_weak:
+                # We can increase the weight of defensive ETFs by another multiplier
+                for i in range(n_etfs):
+                    if defensive_mask[i]:
+                        target_weights[i] *= 5.0
+
+                # Normalize again
+                floored = np.maximum(target_weights, min_weight)
+                target_weights = floored / np.sum(floored)
 
         # Check deviation and cooldown
         max_dev = 0.0
