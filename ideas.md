@@ -24,3 +24,37 @@ Modified `load_market_data()` to only use the price trend.
 
 **Observations**
 There was a slight uptick in overall return and Sharpe, but a notable improvement in maximum drawdown, indicating that the simplified regime filter protects capital better by eliminating the volume lag requirement.
+
+# Failed Improvements
+
+## Shorter Momentum Window
+**Description**
+Tried shortening `MOMENTUM_WINDOW` from 20 to 10.
+**Performance After**
+CAGR dropped to 34.53%, Sharpe to 1.528.
+**Observations**
+Increased noise and false signals, leading to poorer performance.
+
+## Higher Rank Power
+**Description**
+Increased `RANK_POWER` from 0.5 to 1.0 (linear scaling instead of extreme-focused).
+**Performance After**
+CAGR dropped to 34.02%, Max DD worsened to -16.09%.
+**Observations**
+Diluted the strength of the momentum signal by not concentrating enough on the extremes.
+
+## Higher Alpha Strength
+**Description**
+Increased `ALPHA_STRENGTH` from 0.5 to 0.7 for more aggressive tilts.
+**Performance After**
+CAGR dropped to 34.37%, Sharpe to 1.496.
+**Observations**
+Penalized non-defensive ETFs too severely and over-concentrated the portfolio.
+
+## Shorter Sharpe Span
+**Description**
+Shortened `SHARPE_SPAN` from 60 to 40 for more responsive baseline weighting.
+**Performance After**
+CAGR dropped significantly to 32.66%, Max DD worsened to -17.02%.
+**Observations**
+The shorter lookback introduced excessive churn and instability in base weights.
