@@ -136,3 +136,30 @@ Modified `jit_backtest_core()` to apply an extra multiplier after base weights c
 
 **Observations**
 Shifting extremely heavily to defensive ETFs during weak market regimes dramatically reduced drawdowns and allowed compounding to significantly boost overall returns.
+
+## Multi-Layer Weak Market (Extreme Weak Market Cash Allocation)
+**Description**
+Implemented a multi-layer weak market definition by adding an `extreme_weak_market` regime, defined as `CSI300 < EMA60 * 0.95`. During this extreme weak market, the strategy shifts 50% of its capital to a cash position that yields a 2% annualized risk-free return, reducing exposure to equities.
+
+**Performance Before (Baseline AltW+Reg)**
+- CAGR: 41.35%
+- Sharpe: 1.774
+- Max Drawdown: -11.38%
+
+**Performance After (Experiment A AltW+Reg)**
+- CAGR: 42.27%
+- Sharpe: 1.812
+- Max Drawdown: -11.38%
+
+**Observations**
+Adding a 50% cash allocation during extreme weak markets yielded a small improvement in absolute returns (CAGR improved from 41.35% to 42.27%) and risk-adjusted return (Sharpe improved from 1.774 to 1.812) while keeping maximum drawdown identical. It successfully reduced downside exposure when the market trended deeply negative, allowing the strategy to bounce back slightly stronger.
+
+## Failed Improvements
+
+## Volume Surge Momentum Scale
+**Description**
+Tried adding a `volume_surge` regime (when 5-day volume MA > 60-day volume MA * 1.2) that increases the momentum scale to 2.0 (more aggressive) outside of weak markets.
+**Performance After (Experiment B AltW+Reg)**
+CAGR dropped from 41.35% to 40.07%, Sharpe dropped to 1.712, and Max Drawdown worsened to -11.73%.
+**Observations**
+Like the previous volume experiment, incorporating volume led to noisier signals and whipsawing. Increasing the scale based on volume resulted in an over-concentration during market tops right before corrections.
