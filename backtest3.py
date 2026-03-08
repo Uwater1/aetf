@@ -355,6 +355,16 @@ def jit_backtest_core(
         else:
             target_weights = compute_v2_weights(t, bool(weak_market_arr[t]), is_aggressive)
 
+            # Extreme defensive tilt in weak markets
+            if bool(weak_market_arr[t]):
+                for i in range(n_etfs):
+                    if defensive_mask[i]:
+                        target_weights[i] *= 5.0
+
+                # Normalize again
+                floored = np.maximum(target_weights, min_weight)
+                target_weights = floored / np.sum(floored)
+
         # Check deviation and cooldown
         max_dev = 0.0
         for i in range(n_etfs):
