@@ -75,6 +75,10 @@ MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown
 RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
 EXTREME_BOOST = 3                    # Extra multiplier for defensive ETFs in weak markets, notice its x1.5
 CASH_YIELD = 0.02                    # Annualized risk-free return for cash holdings
+EXTREME_CASH_MIN = 0.20              # Minimum cash % when entering extreme weak zone (ratio=0.95)
+EXTREME_CASH_MAX = 0.80              # Maximum cash % at deepest extreme weak zone (ratio≤0.90)
+EXTREME_RATIO_UPPER = 0.95           # CSI300/EMA60 ratio threshold to start cash allocation
+EXTREME_RATIO_LOWER = 0.90           # CSI300/EMA60 ratio threshold for maximum cash allocation
 
 
 
@@ -214,8 +218,10 @@ def load_market_data():
     )
     # Extreme weak market
     market['extreme_weak_market'] = (
-        market['csi300_close'] < market['csi300_ema60'] * 0.95
+        market['csi300_close'] < market['csi300_ema60'] * EXTREME_RATIO_UPPER
     )
+    # CSI300 / EMA60 ratio for dynamic cash scaling
+    market['csi_ema_ratio'] = market['csi300_close'] / market['csi300_ema60']
     return market
 
 
@@ -250,8 +256,27 @@ def precompute_indicators(prices):
 
 
 @njit
+def _compute_dynamic_cash(ratio, use_regime):
+    """Compute target cash fraction from CSI300/EMA60 ratio.
+
+    Linearly scales from EXTREME_CASH_MIN at ratio=EXTREME_RATIO_UPPER
+    to EXTREME_CASH_MAX at ratio≤EXTREME_RATIO_LOWER.
+    Returns 0.0 when ratio ≥ EXTREME_RATIO_UPPER or regime is off.
+    """
+    if not use_regime:
+        return 0.0
+    if ratio >= EXTREME_RATIO_UPPER:
+        return 0.0
+    span = EXTREME_RATIO_UPPER - EXTREME_RATIO_LOWER
+    frac = (EXTREME_RATIO_UPPER - ratio) / span  # 0→1 as ratio drops
+    frac = min(max(frac, 0.0), 1.0)
+    return EXTREME_CASH_MIN + (EXTREME_CASH_MAX - EXTREME_CASH_MIN) * frac
+
+
+@njit
 def jit_backtest_core(
     prices_arr, daily_returns_arr, weak_market_arr, extreme_weak_market_arr, ma60_arr,
+    csi_ema_ratio_arr,
     defensive_mask, n_days, n_etfs, min_weight, rebalance_threshold, min_hold_days,
     stamp_duty, momentum_window, alpha_strength, rank_power, extreme_boost,
     base_weights_arr, override_weights_arr=None, use_regime=True, trade_start_idx=0
@@ -357,7 +382,7 @@ def jit_backtest_core(
             else:
                 current_weights = compute_v2_weights(t, bool(weak_market_arr[t]), False)
 
-            target_cash = 0.5 if use_regime and extreme_weak_market_arr[t] else 0.0
+            target_cash = _compute_dynamic_cash(csi_ema_ratio_arr[t], use_regime)
             current_weights = current_weights * (1.0 - target_cash)
             holdings = nav * current_weights
             cash_holding = nav * target_cash
@@ -384,7 +409,7 @@ def jit_backtest_core(
         is_aggressive = (consecutive_non_weak >= 3) and not bool(weak_market_arr[t])
 
         # Compute target weights
-        target_cash = 0.5 if use_regime and extreme_weak_market_arr[t] else 0.0
+        target_cash = _compute_dynamic_cash(csi_ema_ratio_arr[t], use_regime)
 
         if override_weights_arr is not None:
             target_weights = override_weights_arr.copy()
@@ -461,6 +486,7 @@ def run_backtest(prices, market_data, ma60_arr, base_weights_df,
         extreme_weak_market_arr = market_data['extreme_weak_market'].reindex(prices.index).fillna(False).values.astype(np.bool_)
     else:
         extreme_weak_market_arr = np.zeros(len(prices), dtype=np.bool_)
+    csi_ema_ratio_arr = market_data['csi_ema_ratio'].reindex(prices.index).ffill().fillna(1.0).values.astype(np.float64)
 
     defensive_mask = np.array([name in DEFENSIVE_ETFS for name in etf_names], dtype=np.bool_)
 
@@ -472,6 +498,7 @@ def run_backtest(prices, market_data, ma60_arr, base_weights_df,
 
     nav_hist, weight_hist_vals, cash_hist, rebalance_flags, n_trades = jit_backtest_core(
         prices_arr, daily_returns_arr, weak_market_arr, extreme_weak_market_arr, ma60_arr,
+        csi_ema_ratio_arr,
         defensive_mask, len(prices), len(etf_names), MIN_WEIGHT, REBALANCE_THRESHOLD,
         MIN_HOLD_DAYS, STAMP_DUTY, MOMENTUM_WINDOW, ALPHA_STRENGTH, RANK_POWER, EXTREME_BOOST,
         bw_arr, ov_arr, use_regime, trade_start_idx
