@@ -76,7 +76,7 @@ RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrate
 EXTREME_BOOST = 3                    # Extra multiplier for defensive ETFs in weak markets, notice its x1.5
 CASH_YIELD = 0.02                    # Annualized risk-free return for cash holdings
 EXTREME_CASH_MIN = 0.20              # Minimum cash % when entering extreme weak zone (ratio=0.95)
-EXTREME_CASH_MAX = 0.70              # Maximum cash % at deepest extreme weak zone (ratio≤0.90)
+EXTREME_CASH_MAX = 0.80              # Maximum cash % at deepest extreme weak zone (ratio≤0.90)
 EXTREME_RATIO_UPPER = 0.95           # CSI300/EMA60 ratio threshold to start cash allocation
 EXTREME_RATIO_LOWER = 0.90           # CSI300/EMA60 ratio threshold for maximum cash allocation
 
