@@ -58,6 +58,7 @@ STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each reb
 REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
 RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
+EXTREME_BOOST = 3                    # Extra multiplier for defensive ETFs in weak markets, notice its x1.5
 
 
 
@@ -226,7 +227,7 @@ def precompute_indicators(prices):
 def jit_backtest_core(
     prices_arr, daily_returns_arr, weak_market_arr, ma60_arr,
     defensive_mask, n_days, n_etfs, min_weight, rebalance_threshold, min_hold_days,
-    stamp_duty, momentum_window, alpha_strength, rank_power,
+    stamp_duty, momentum_window, alpha_strength, rank_power, extreme_boost,
     base_weights_arr, override_weights_arr=None, use_regime=True, trade_start_idx=0
 ):
     """
@@ -359,7 +360,7 @@ def jit_backtest_core(
             if bool(weak_market_arr[t]):
                 for i in range(n_etfs):
                     if defensive_mask[i]:
-                        target_weights[i] *= 5.0
+                        target_weights[i] *= extreme_boost
 
                 # Normalize again
                 floored = np.maximum(target_weights, min_weight)
@@ -418,7 +419,7 @@ def run_backtest(prices, market_data, ma60_arr, base_weights_df,
     nav_hist, weight_hist_vals, rebalance_flags, n_trades = jit_backtest_core(
         prices_arr, daily_returns_arr, weak_market_arr, ma60_arr,
         defensive_mask, len(prices), len(etf_names), MIN_WEIGHT, REBALANCE_THRESHOLD,
-        MIN_HOLD_DAYS, STAMP_DUTY, MOMENTUM_WINDOW, ALPHA_STRENGTH, RANK_POWER,
+        MIN_HOLD_DAYS, STAMP_DUTY, MOMENTUM_WINDOW, ALPHA_STRENGTH, RANK_POWER, EXTREME_BOOST,
         bw_arr, ov_arr, use_regime, trade_start_idx
     )
 
