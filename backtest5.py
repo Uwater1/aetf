@@ -336,7 +336,7 @@ def jit_backtest_core(
             else:
                 current_weights = compute_v2_weights(t, bool(weak_market_arr[t]), False)
 
-            target_cash = 0.5 if use_regime and extreme_weak_market_arr[t] else 0.0
+            target_cash = EXTREME_WEAK_MARKET_CASH_ALLOCATION if use_regime and extreme_weak_market_arr[t] else 0.0
             current_weights = current_weights * (1.0 - target_cash)
             holdings = nav * current_weights
             cash_holding = nav * target_cash
