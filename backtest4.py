@@ -72,7 +72,7 @@ MIN_WEIGHT = 0.03                    # 3% minimum weight per ETF
 STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each rebalance
 REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
-RANK_POWER = 0.4                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
+RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
 EXTREME_BOOST = 3                    # Extra multiplier for defensive ETFs in weak markets, notice its x1.5
 CASH_YIELD = 0.02                    # Annualized risk-free return for cash holdings
 
