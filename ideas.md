@@ -163,3 +163,28 @@ Tried adding a `volume_surge` regime (when 5-day volume MA > 60-day volume MA * 
 CAGR dropped from 41.35% to 40.07%, Sharpe dropped to 1.712, and Max Drawdown worsened to -11.73%.
 **Observations**
 Like the previous volume experiment, incorporating volume led to noisier signals and whipsawing. Increasing the scale based on volume resulted in an over-concentration during market tops right before corrections.
+
+## Dynamic Extreme Weak Market Cash Allocation
+**Description**
+Replaced the hardcoded 0.5 (50%) cash allocation during extreme weak markets with a dynamic scaling approach.
+Calculated the distance between the CSI300 index and its EMA60. Scaled the cash position linearly up to 100% between 0.95 and 0.90 ratios.
+**Performance After (Experiment 1 AltW+Reg)**
+CAGR dropped to 41.49%, Sharpe dropped to 1.776.
+**Observations**
+Dynamic scaling introduced too much churn and forced the strategy to hold too much cash right before major trend reversals, causing it to miss out on the initial rebound.
+
+## Strong Market Regime Aggressive Sizing
+**Description**
+Defined a `strong_market` regime (CSI300 > EMA60 * 1.05) to increase the momentum scale to 2.0 and tilt heavier toward highest momentum ETFs.
+**Performance After (Experiment 2 AltW+Reg)**
+CAGR dropped to 41.66%, Sharpe dropped to 1.773.
+**Observations**
+Over-concentrating on top momentum names when the index is extremely extended often results in severe whipsawing when mean reversion kicks in. The normal aggressive sizing (1.5x) is more stable.
+
+## Shorter EMA Blended Weak Market Definition
+**Description**
+Required the price to be below both EMA60 and EMA20 for a weak market. This places more emphasis on recent data, exiting the weak market earlier if momentum turns positive.
+**Performance After (Experiment 3 AltW+Reg)**
+CAGR dropped to 41.22%, Sharpe dropped to 1.774.
+**Observations**
+Exiting the weak market regime prematurely based on short-term noise eliminated the protective effect of the defensive tilts and led to poorer risk-adjusted returns.
