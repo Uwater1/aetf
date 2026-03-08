@@ -23,13 +23,28 @@ from numba import njit
 
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid value encountered')
 warnings.filterwarnings('ignore', category=FutureWarning, message='Downcasting object dtype')
+
+
+def safe_pct_change(df):
+    """Compute pct_change that is safe for pre-launch ETFs.
+
+    When prices are forward-filled and then NaN-filled with 0, the first real
+    price produces an inf return (0 → positive).  This helper replaces any
+    inf / -inf values with 0 so downstream EWMA and Sharpe calculations stay
+    finite.
+    """
+    ret = df.pct_change()
+    ret = ret.replace([np.inf, -np.inf], np.nan).fillna(0)
+    return ret
+
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 BASE_DIR = '.'
 SELECTED_DIR = os.path.join(BASE_DIR, 'selected3')
 BENCHMARK_ETF = '沪深300'
 VOLUME_FILE = os.path.join(BASE_DIR, 'volume.csv')
 ANNUAL_RF = 0.0 # Use the old Sharpe ratio
-RF_DAILY = ANNUAL_RF / 250.0
+RF_DAILY = ANNUAL_RF / 252.0
 SHARPE_SPAN = 60                     # Lookback span for dynamic Sharpe weights (EWMA)
 SHARPE_MIN_PERIODS = 20              # Warm-up days before EWMA Sharpe is considered stable
 
@@ -102,7 +117,7 @@ def precompute_trailing_sharpe_weights(prices, bench_prices, min_periods=SHARPE_
     using each ETF's historical Sharpe differential vs. the peer+benchmark average.
     This involves a small, bounded lookahead that only affects the first ~20 days.
     """
-    daily_returns = prices.pct_change().fillna(0)
+    daily_returns = safe_pct_change(prices)
     excess_returns = daily_returns - RF_DAILY
 
     # ── Step 1: Full-period Sharpe per ETF (used only for pre-fill differential) ──
@@ -133,11 +148,17 @@ def precompute_trailing_sharpe_weights(prices, bench_prices, min_periods=SHARPE_
     # ── Step 5: Pre-fill NaN cells using daily group mean × (1 + diff_i) ──
     # For each day that has at least one non-NaN ETF, compute the daily mean
     # of those ETFs and use each ETF's differential to fill its NaN.
+    # When ALL ETFs are NaN (early warm-up before any ETF reaches min_periods),
+    # daily_group_mean is also NaN.  Fall back to full_sharpe.mean() so the
+    # initial weights reflect relative historical performance instead of
+    # defaulting to blind equal weight.
     daily_group_mean = ewma_sharpe.mean(axis=1)   # mean of non-NaN columns per row
+    full_sharpe_mean = float(full_sharpe.mean())   # fallback for all-NaN rows
     for etf in prices.columns:
         nan_mask = ewma_sharpe[etf].isna()
         if nan_mask.any():
-            prefill = daily_group_mean[nan_mask] * (1.0 + sharpe_diff[etf])
+            group_mean_filled = daily_group_mean[nan_mask].fillna(full_sharpe_mean)
+            prefill = group_mean_filled * (1.0 + sharpe_diff[etf])
             ewma_sharpe.loc[nan_mask, etf] = prefill.clip(lower=0)
 
     # ── Step 6: Clip negatives, normalize to weights ──
@@ -434,7 +455,7 @@ def run_backtest(prices, market_data, ma60_arr, base_weights_df,
     """
     etf_names = prices.columns.tolist()
     prices_arr = prices.values.astype(np.float64)
-    daily_returns_arr = prices.pct_change().fillna(0).values.astype(np.float64)
+    daily_returns_arr = safe_pct_change(prices).values.astype(np.float64)
     weak_market_arr = market_data['weak_market'].reindex(prices.index).fillna(False).values.astype(np.bool_)
     if 'extreme_weak_market' in market_data.columns:
         extreme_weak_market_arr = market_data['extreme_weak_market'].reindex(prices.index).fillna(False).values.astype(np.bool_)
@@ -595,22 +616,24 @@ def main():
 
     # 2. Precompute per-ETF EMA60 tables (pandas_ta, done once)
     print("[2] Precomputing indicators...")
-    prices_filled = prices.ffill().fillna(0)
+    prices_ffilled = prices.ffill()              # keep NaN for not-yet-launched ETFs
+    prices_filled = prices_ffilled.fillna(0)     # 0-filled only for arrays that need it
     ma60_arr = precompute_indicators(prices_filled)
 
     # Precompute Dynamic Sharpe Weights and Equal Weights DataFrame
+    # NOTE: pass ffill-only prices so safe_pct_change sees NaN→NaN (not 0→price=inf)
     print("[Pre-3] Computing Trailing Sharpe Base Weights (with pre-fill)...")
     bench_path = os.path.join(SELECTED_DIR, f'{BENCHMARK_ETF}.csv')
     bench_df = pd.read_csv(bench_path)
     bench_df['date'] = pd.to_datetime(bench_df['date'])
     bench_df = bench_df.sort_values('date').set_index('date')
     bench_prices = bench_df['adj_close'].reindex(prices.index).ffill()
-    alt_weights_df = precompute_trailing_sharpe_weights(prices_filled, bench_prices)
+    alt_weights_df = precompute_trailing_sharpe_weights(prices_ffilled, bench_prices)
     eq_val = 1.0 / len(PORTFOLIO_ETFS)
     eq_weights_df = pd.DataFrame(eq_val, index=prices.index, columns=prices.columns)
     equal_weights = {name: eq_val for name in PORTFOLIO_ETFS}
 
-    prices_bt = prices_filled  # use filled prices for backtest arrays
+    prices_bt = prices_filled  # use 0-filled prices for backtest arrays (Numba needs no NaN)
 
     # 3. Strategy 1: Equal weight baseline (static, no regime model)
     print("[3] Running Equal Weight strategy...")
