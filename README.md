@@ -10,8 +10,9 @@ A concise pipeline for downloading, cleaning, and analyzing ETF (Exchange Traded
 2.  **Data Cleaning & Filtering**:
     *   `python initial-clean.py`: Filters for ETFs with ≥3 years of history (pre-2023 start), valid recent data, and overall growth. Moves matches to `selected/`.
     *   `python further_clean.py`: Removes highly correlated ETFs (>0.995) to eliminate redundancy, picking the "best" specimen (highest volume/history) for the `selected2/` folder.
+    *   `python merge_etfs.py`: Merges very similar ETFs into groups to boost liquidity, moving matches to `selected3/`.
 3.  **Data Enhancement**:
-    *   `python process_dividends.py` & `initial-clean.py`: Calculate and add dividend columns based on adjustment ratios (YFinance) or `preclose` differences (BaoStock).
+    *   `python process_dividends.py`: Calculate and add dividend columns based on adjustment ratios (YFinance) or `preclose` differences (BaoStock).
 
 ## 📁 Directory Structure
 
