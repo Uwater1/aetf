@@ -1,5 +1,9 @@
-import yfinance as yf
-import pandas as pd
+try:
+    import yfinance as yf
+    import pandas as pd
+except ImportError:
+    yf = None
+    pd = None
 import sys
 import os
 import re
