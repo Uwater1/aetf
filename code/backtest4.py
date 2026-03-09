@@ -519,11 +519,6 @@ def run_backtest(prices, market_data, ma60_arr, base_weights_df,
 
 
 
-
-
-
-
-
 def compute_metrics(nav_series):
     """Compute performance metrics: total return, CAGR, Sharpe, Sortino, MaxDD, Calmar."""
     total_ret = nav_series.iloc[-1] / nav_series.iloc[0] - 1
