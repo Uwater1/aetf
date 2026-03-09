@@ -27,11 +27,9 @@ def clean_file(filepath):
     df.loc[df['dividend'] < 0.001, 'dividend'] = 0.0
     df.loc[0, 'dividend'] = 0.0  # First row has no previous data
 
-    # Round price columns to 6 decimal places
-    for col in ['open', 'high', 'low', 'close', 'adj_close']:
-        if col in df.columns:
-            df[col] = df[col].round(6)
-    df['dividend'] = df['dividend'].round(6)
+    # Round price columns and dividend to 6 decimal places
+    cols_to_round = [col for col in ['open', 'high', 'low', 'close', 'adj_close', 'dividend'] if col in df.columns]
+    df[cols_to_round] = df[cols_to_round].round(6)
 
     # Drop helper column and unused columns
     df = df.drop(columns=['ratio'])
