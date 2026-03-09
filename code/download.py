@@ -62,16 +62,15 @@ def download_stock_data(input_file):
                     if not parts or not any(parts): continue
                     if len(parts) > num_cols:
                         # Attempt to fix lines like "399284.XSHE,AI,50,2020-02-18,2020-02-18,AI,50"
-                        # We assume the first field is code and last two are likely dates/names
                         # For index.csv: Code, Category, Date1, Date2, ShortName
                         # If we have 7 fields instead of 5: [Code, Cat1, Cat2, Date1, Date2, Short1, Short2]
                         if num_cols == 5 and len(parts) == 7:
                             fixed = [
-                                parts[0], 
-                                f"{parts[1]} {parts[2]}", 
-                                parts[3], 
-                                parts[4], 
-                                f"{parts[5]} {parts[6]}"
+                                parts[0],           # Code
+                                f"{parts[1]} {parts[2]}", # Category (merged)
+                                parts[3],           # Date1
+                                parts[4],           # Date2
+                                f"{parts[5]} {parts[6]}"  # ShortName (merged)
                             ]
                             data.append(fixed)
                         else:
