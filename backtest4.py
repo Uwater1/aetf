@@ -79,7 +79,7 @@ EXTREME_CASH_MIN = 0.20              # Minimum cash % when entering extreme weak
 EXTREME_CASH_MAX = 0.80              # Maximum cash % at deepest extreme weak zone (ratio≤0.90)
 EXTREME_RATIO_UPPER = 0.95           # CSI300/EMA60 ratio threshold to start cash allocation
 EXTREME_RATIO_LOWER = 0.90           # CSI300/EMA60 ratio threshold for maximum cash allocation
-
+UP_ADJUST = 0.9                      # Upside volatility multiplier (0.0 = Sortino, 1.0 = Sharpe)
 
 
 def load_all_data(etf_names, warmup_days=60):
@@ -145,7 +145,12 @@ def precompute_trailing_sharpe_weights(prices, bench_prices, min_periods=SHARPE_
 
     # ── Step 4: EWMA Sharpe (with NaN during warm-up) ──
     ewma_mean = excess_returns.ewm(span=span, min_periods=min_periods).mean() * 252
-    ewma_vol  = excess_returns.ewm(span=span, min_periods=min_periods).std()  * np.sqrt(252)
+    
+    # Adjust upside volatility based on UP_ADJUST (0 for Sortino, 1 for Sharpe)
+    adj_excess_returns = excess_returns.copy()
+    adj_excess_returns[adj_excess_returns > 0] *= UP_ADJUST
+    ewma_vol  = adj_excess_returns.ewm(span=span, min_periods=min_periods).std()  * np.sqrt(252)
+    
     ewma_sharpe = ewma_mean / ewma_vol   # NaN where < min_periods data
 
     # ── Step 5: Pre-fill NaN cells using daily group mean × (1 + diff_i) ──

@@ -18,7 +18,6 @@ import os
 import warnings
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
 from numba import njit
 
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='invalid value encountered')
@@ -34,7 +33,8 @@ def safe_pct_change(df):
     finite.
     """
     ret = df.pct_change()
-    ret = ret.replace([np.inf, -np.inf], np.nan).fillna(0)
+    ret.mask(np.isinf(ret), inplace=True)
+    ret.fillna(0, inplace=True)
     return ret
 
 
@@ -42,7 +42,7 @@ def safe_pct_change(df):
 BASE_DIR = '.'
 SELECTED_DIR = os.path.join(BASE_DIR, 'selected3')
 BENCHMARK_ETF = '沪深300'
-VOLUME_FILE = os.path.join(BASE_DIR, 'volume.csv')
+VOLUME_FILE = os.path.join(BASE_DIR, 'csv', 'volume.csv')
 ANNUAL_RF = 0.0 # Use the old Sharpe ratio
 RF_DAILY = ANNUAL_RF / 252.0
 SHARPE_SPAN = 60                     # Lookback span for dynamic Sharpe weights (EWMA)
@@ -93,9 +93,8 @@ def load_all_data(etf_names, warmup_days=60):
     series = {}
     for name in etf_names:
         filepath = os.path.join(SELECTED_DIR, f'{name}.csv')
-        df = pd.read_csv(filepath)
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date').set_index('date')
+        df = pd.read_csv(filepath, parse_dates=['date'], index_col='date')
+        df.sort_index(inplace=True)
         series[name] = df['adj_close']
 
     # Union of all dates (each ETF keeps its own history; NaN where not yet launched)
@@ -192,20 +191,18 @@ def load_market_data():
     """
     # CSI300 prices
     bench_path = os.path.join(SELECTED_DIR, f'{BENCHMARK_ETF}.csv')
-    bench_df = pd.read_csv(bench_path)
-    bench_df['date'] = pd.to_datetime(bench_df['date'])
-    bench_df = bench_df.sort_values('date').set_index('date')
+    bench_df = pd.read_csv(bench_path, parse_dates=['date'], index_col='date')
+    bench_df.sort_index(inplace=True)
 
     csi300 = bench_df[['adj_close']].rename(columns={'adj_close': 'csi300_close'})
-    csi300['csi300_ema60'] = ta.ema(csi300['csi300_close'], length=60)
+    csi300['csi300_ema60'] = csi300['csi300_close'].ewm(span=60, adjust=False).mean()
 
     # Volume data
-    vol_df = pd.read_csv(VOLUME_FILE)
-    vol_df['date'] = pd.to_datetime(vol_df['date'])
-    vol_df = vol_df.sort_values('date').set_index('date')
+    vol_df = pd.read_csv(VOLUME_FILE, parse_dates=['date'], index_col='date')
+    vol_df.sort_index(inplace=True)
 
-    vol_df['vol_ma5'] = ta.sma(vol_df['volume_k'], length=5)
-    vol_df['vol_ma60'] = ta.sma(vol_df['volume_k'], length=60)
+    vol_df['vol_ma5'] = vol_df['volume_k'].rolling(window=5).mean()
+    vol_df['vol_ma60'] = vol_df['volume_k'].rolling(window=60).mean()
 
     # Merge on date
     market = csi300.join(vol_df[['vol_ma5', 'vol_ma60']], how='left')
@@ -250,12 +247,12 @@ def precompute_indicators(prices):
 
     for i, name in enumerate(prices.columns):
         s = prices[name]
-        indicators_arr[i, :] = ta.ema(s, length=EMA60_WINDOW).fillna(0).values
+        indicators_arr[i, :] = s.ewm(span=EMA60_WINDOW, adjust=False).mean().fillna(0).values
 
     return indicators_arr
 
 
-@njit
+@njit(cache=True)
 def _compute_dynamic_cash(ratio, use_regime):
     """Compute target cash fraction from CSI300/EMA60 ratio.
 
@@ -273,7 +270,7 @@ def _compute_dynamic_cash(ratio, use_regime):
     return EXTREME_CASH_MIN + (EXTREME_CASH_MAX - EXTREME_CASH_MIN) * frac
 
 
-@njit
+@njit(cache=True)
 def jit_backtest_core(
     prices_arr, daily_returns_arr, weak_market_arr, extreme_weak_market_arr, ma60_arr,
     csi_ema_ratio_arr,
@@ -610,9 +607,8 @@ def print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
 def load_benchmark(dates):
     """Load benchmark ETF (沪深300) and normalize to NAV=1.0 at start."""
     filepath = os.path.join(SELECTED_DIR, f'{BENCHMARK_ETF}.csv')
-    df = pd.read_csv(filepath)
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date').set_index('date')
+    df = pd.read_csv(filepath, parse_dates=['date'], index_col='date')
+    df.sort_index(inplace=True)
     bench = df['adj_close'].reindex(dates).ffill()
     bench_nav = bench / bench.iloc[0]  # normalize to 1.0
     return bench_nav
@@ -646,9 +642,8 @@ def main():
     # NOTE: pass ffill-only prices so safe_pct_change sees NaN→NaN (not 0→price=inf)
     print("[Pre-3] Computing Trailing Sharpe Base Weights (with pre-fill)...")
     bench_path = os.path.join(SELECTED_DIR, f'{BENCHMARK_ETF}.csv')
-    bench_df = pd.read_csv(bench_path)
-    bench_df['date'] = pd.to_datetime(bench_df['date'])
-    bench_df = bench_df.sort_values('date').set_index('date')
+    bench_df = pd.read_csv(bench_path, parse_dates=['date'], index_col='date')
+    bench_df.sort_index(inplace=True)
     bench_prices = bench_df['adj_close'].reindex(prices.index).ffill()
     alt_weights_df = precompute_trailing_sharpe_weights(prices_ffilled, bench_prices)
     eq_val = 1.0 / len(PORTFOLIO_ETFS)
