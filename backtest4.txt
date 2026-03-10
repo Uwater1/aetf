@@ -1,0 +1,49 @@
+  Portfolio Backtest — V2 Relative Momentum + Defensive Strategy
+  Params: Mom=20d EMA60=60d SharpeSpan=60d MinW=0.03 AlphaStr=0.5 Thresh=0.1 UpAdj=0.9
+  Convex Soft Rank: power=0.5 best=1.50x worst=0.50x (aggressive scale=5.00x after 3 non-weak days)
+  Defensive ETFs: ['银行', '浙商凤凰', '石油'] (boost=1.50x in weak market)
+
+[1] Loading data...
+    ETFs        : 10
+    Full window : 2023-07-27 -> 2026-02-24 (622 days)
+    Trade start : 2023-10-27 (idx=60, warmup=60 days)
+[2] Precomputing indicators...
+[Pre-3] Computing Trailing Sharpe Base Weights (with pre-fill)...
+[3] Running Equal Weight strategy...
+[4] Running Equal Base + Regime strategy...
+[5] Running Dynamic Trailing Sharpe strategy...
+[6] Running Dynamic Base + Regime strategy...
+
+=====================================================================================
+  PERFORMANCE COMPARISON  (4 strategies + CSI300 benchmark)
+=====================================================================================
+
+Metric                   EqualW   Regime+Def         AltW     AltW+Reg       CSI300
+-------------------------------------------------------------------------------------
+Total Return             76.51%       94.78%       90.47%      127.78%       39.45%
+CAGR                     29.02%       34.84%       33.50%       44.65%       16.08%
+Sharpe                    1.413        1.604        1.560        1.872        0.910
+Sortino                   1.875        2.124        2.171        2.748        1.272
+Volatility               19.41%       19.91%       19.82%       20.93%       18.25%
+Max Drawdown            -14.55%      -13.95%      -14.64%      -11.33%      -16.47%
+Calmar                    1.994        2.497        2.289        3.939        0.977
+Trading Days                562          562          562          562          562
+
+  Rebalance trades fired : 69 (Eq Base) | 78 (Alt Base)
+  Weak market days       : 194/562 (34.5%)
+
+=====================================================================================
+  WEIGHT ALLOCATION — AltW+Regime (last 10 rebalances shown)
+=====================================================================================
+  2025-11-05 | Top: 石油=23%, 中证2000=19%, 有色矿业=16% | Bot: 中证500=3%, 芯片=3%, Cash=0% | Spread: 22.6%
+  2025-11-13 | Top: 石油=28%, 中证2000=18%, 有色矿业=16% | Bot: 芯片=2%, 工程机械=2%, Cash=0% | Spread: 28.1%
+  2025-11-21 | Top: 石油=50%, 银行=25%, 浙商凤凰=11% | Bot: 电信=1%, 工程机械=1%, Cash=0% | Spread: 50.2%
+  2025-12-01 | Top: 有色矿业=27%, 石油=18%, 中证2000=16% | Bot: 浙商凤凰=2%, 沪港深500=2%, Cash=0% | Spread: 27.4%
+  2025-12-09 | Top: 电信=22%, 工程机械=20%, 有色矿业=20% | Bot: 银行=2%, 沪港深500=2%, Cash=0% | Spread: 22.0%
+  2025-12-24 | Top: 有色矿业=26%, 芯片=18%, 电信=17% | Bot: 银行=2%, 沪港深500=2%, Cash=0% | Spread: 25.6%
+  2026-01-13 | Top: 中证500=19%, 有色矿业=17%, 中证2000=15% | Bot: 银行=2%, 沪港深500=2%, Cash=0% | Spread: 18.5%
+  2026-01-21 | Top: 有色矿业=20%, 中证500=17%, 芯片=16% | Bot: 沪港深500=2%, 电信=2%, Cash=0% | Spread: 20.1%
+  2026-02-02 | Top: 石油=42%, 浙商凤凰=28%, 中证2000=6% | Bot: 沪港深500=1%, 银行=1%, Cash=0% | Spread: 42.2%
+  2026-02-10 | Top: 石油=23%, 浙商凤凰=19%, 工程机械=18% | Bot: 沪港深500=2%, 电信=2%, Cash=0% | Spread: 22.8%
+
+Daily NAV saved to: ./backtest_results.csv

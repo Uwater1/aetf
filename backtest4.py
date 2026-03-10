@@ -73,7 +73,7 @@ STAMP_DUTY = 0.001                   # 0.1% stamp duty on sold value at each reb
 REBALANCE_THRESHOLD = 0.10           # Rebalance when max weight deviation > 10%
 MIN_HOLD_DAYS = 5                    # Minimum days between rebalances (cooldown)
 RANK_POWER = 0.5                     # Convex soft ranking power: <1 concentrates at extremes, 1.0=linear
-EXTREME_BOOST = 3                    # Extra multiplier for defensive ETFs in weak markets, notice its x1.5
+EXTREME_BOOST = 5.0                  # Extra multiplier for defensive ETFs in weak markets
 CASH_YIELD = 0.02                    # Annualized risk-free return for cash holdings
 EXTREME_CASH_MIN = 0.20              # Minimum cash % when entering extreme weak zone (ratio=0.95)
 EXTREME_CASH_MAX = 0.80              # Maximum cash % at deepest extreme weak zone (ratio≤0.90)
@@ -320,7 +320,7 @@ def jit_backtest_core(
             # Weak market: disable momentum tilt; only defensive tilt active
             for i in range(n_etfs):
                 if defensive_mask[i]:
-                    weights[i] *= (1.0 + alpha_strength)
+                    weights[i] *= extreme_boost
         else:
             # Convex soft ranking: power-law curve concentrates signal at extremes
             # norm = 2*rank/(N-1) - 1  ∈ [-1, +1]
@@ -421,16 +421,6 @@ def jit_backtest_core(
             target_weights = floored / np.sum(floored)
         else:
             target_weights = compute_v2_weights(t, bool(weak_market_arr[t]), is_aggressive)
-
-            # Extreme defensive tilt in weak markets
-            if bool(weak_market_arr[t]):
-                for i in range(n_etfs):
-                    if defensive_mask[i]:
-                        target_weights[i] *= extreme_boost
-
-                # Normalize again
-                floored = np.maximum(target_weights, min_weight)
-                target_weights = floored / np.sum(floored)
 
         # Apply cash holding reduction
         target_weights = target_weights * (1.0 - target_cash)
@@ -622,9 +612,9 @@ def load_benchmark(dates):
 def main():
     print("  Portfolio Backtest — V2 Relative Momentum + Defensive Strategy")
     print(f"  Params: Mom={MOMENTUM_WINDOW}d EMA60={EMA60_WINDOW}d SharpeSpan={SHARPE_SPAN}d "
-          f"MinW={MIN_WEIGHT} AlphaStr={ALPHA_STRENGTH} Thresh={REBALANCE_THRESHOLD}")
+          f"MinW={MIN_WEIGHT} AlphaStr={ALPHA_STRENGTH} Thresh={REBALANCE_THRESHOLD} UpAdj={UP_ADJUST}")
     print(f"  Convex Soft Rank: power={RANK_POWER} best={1+ALPHA_STRENGTH:.2f}x worst={1-ALPHA_STRENGTH:.2f}x "
-          f"(aggressive scale=1.5x after 3 non-weak days)")
+          f"(aggressive scale={EXTREME_BOOST:.2f}x after 3 non-weak days)")
     print(f"  Defensive ETFs: {[e.split('_')[0] for e in DEFENSIVE_ETFS]} "
           f"(boost={1+ALPHA_STRENGTH:.2f}x in weak market)")
 
