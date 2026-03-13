@@ -560,9 +560,9 @@ def compute_metrics(nav_series, ann_turnover=None):
         'Trading Days': str(n_days),
     }
     if ann_turnover is not None:
-        metrics['Turnover (Ann.)'] = f'{ann_turnover:.2%}'
+        metrics['Turnover'] = f'{ann_turnover:.4f}'
     else:
-        metrics['Turnover (Ann.)'] = 'N/A'
+        metrics['Turnover'] = 'N/A'
     return metrics
 
 
