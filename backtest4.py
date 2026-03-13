@@ -507,11 +507,23 @@ def run_backtest(prices, market_data, ma60_arr, base_weights_df,
             w_dict['Cash'] = cash_hist[t]
             weight_history.append({'date': prices.index[t], 'weights': w_dict})
 
-    return nav_series, weight_history, n_trades
+    total_turnover = 0.0
+    if len(weight_history) > 1:
+        prev_w = weight_history[0]['weights']
+        for i in range(1, len(weight_history)):
+            curr_w = weight_history[i]['weights']
+            diff_sum = sum(abs(curr_w[k] - prev_w.get(k, 0.0)) for k in curr_w.keys())
+            total_turnover += diff_sum / 2.0
+            prev_w = curr_w
+            
+    n_days = len(prices) - trade_start_idx
+    ann_turnover = total_turnover * 252.0 / n_days if n_days > 0 else 0.0
+
+    return nav_series, weight_history, n_trades, ann_turnover
 
 
 
-def compute_metrics(nav_series):
+def compute_metrics(nav_series, ann_turnover=None):
     """Compute performance metrics: total return, CAGR, Sharpe, Sortino, MaxDD, Calmar."""
     total_ret = nav_series.iloc[-1] / nav_series.iloc[0] - 1
     n_days = len(nav_series)
@@ -537,7 +549,7 @@ def compute_metrics(nav_series):
     # Volatility
     ann_vol = daily_ret.std() * np.sqrt(252)
 
-    return {
+    metrics = {
         'Total Return': f'{total_ret:.2%}',
         'CAGR': f'{cagr:.2%}',
         'Sharpe': f'{sharpe:.3f}',
@@ -545,25 +557,30 @@ def compute_metrics(nav_series):
         'Volatility': f'{ann_vol:.2%}',
         'Max Drawdown': f'{max_dd:.2%}',
         'Calmar': f'{calmar:.3f}',
-        'Trading Days': n_days,
+        'Trading Days': str(n_days),
     }
+    if ann_turnover is not None:
+        metrics['Turnover (Ann.)'] = f'{ann_turnover:.2%}'
+    else:
+        metrics['Turnover (Ann.)'] = 'N/A'
+    return metrics
 
 
 def print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
-                  regime_wh, altw_regime_wh, n_trades_eq, n_trades_alt, n_weak_days, n_total_days):
+                  regime_wh, altw_regime_wh, n_trades_eq, n_trades_alt, n_weak_days, n_total_days, turn_eq, turn_reg, turn_altw, turn_alt):
     """Print 4-strategy performance comparison and diagnostics."""
-    eq_m = compute_metrics(equalw_nav)
-    rg_m = compute_metrics(regime_nav)
-    aw_m = compute_metrics(altw_nav)
-    ar_m = compute_metrics(altw_regime_nav)
+    eq_m = compute_metrics(equalw_nav, turn_eq)
+    rg_m = compute_metrics(regime_nav, turn_reg)
+    aw_m = compute_metrics(altw_nav, turn_altw)
+    ar_m = compute_metrics(altw_regime_nav, turn_alt)
     bn_m = compute_metrics(bench_nav)
 
-    COL = 12
-    print("\n" + "=" * 85)
+    COL = 15
+    print("\n" + "=" * 95)
     print("  PERFORMANCE COMPARISON  (4 strategies + CSI300 benchmark)")
-    print("=" * 85)
+    print("=" * 95)
     print(f"\n{'Metric':<18} {'EqualW':>{COL}} {'Regime+Def':>{COL}} {'AltW':>{COL}} {'AltW+Reg':>{COL}} {'CSI300':>{COL}}")
-    print("-" * 85)
+    print("-" * 95)
     for key in eq_m:
         print(f"{key:<18} {eq_m[key]:>{COL}} {rg_m[key]:>{COL}} {aw_m[key]:>{COL}} {ar_m[key]:>{COL}} {bn_m[key]:>{COL}}")
 
@@ -574,9 +591,9 @@ def print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
     # Compact weight history
     etf_short = {n: n.split('_')[0][:6] for n in PORTFOLIO_ETFS}
     etf_short['Cash'] = 'Cash'
-    print(f"\n{'=' * 85}")
+    print(f"\n{'=' * 95}")
     print("  WEIGHT ALLOCATION — AltW+Regime (last 10 rebalances shown)")
-    print("=" * 85)
+    print("=" * 95)
     for entry in altw_regime_wh[-10:]:
         date = entry['date']
         weights = entry['weights']
@@ -597,6 +614,53 @@ def print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
     output_path = os.path.join(BASE_DIR, 'backtest_results.csv')
     nav_compare.round(5).to_csv(output_path)
     print(f"\nDaily NAV saved to: {output_path}")
+
+
+def save_trades(weight_history, filename):
+    """Save trade logs based on target weight differences at rebalance dates."""
+    with open(filename, 'w', encoding='utf-8') as f:
+        if not weight_history:
+            return
+        
+        # Initial allocation
+        date_str = weight_history[0]['date'].strftime('%Y-%m-%d')
+        f.write(f"=== {date_str} Initial Allocation ===\n")
+        prev_w = weight_history[0]['weights']
+        for etf, w in prev_w.items():
+            if w >= 0.001:
+                f.write(f"  BUY  {etf:<8}  {w:>6.2%}\n")
+        f.write("\n")
+        
+        # Subsequent rebalances
+        for i in range(1, len(weight_history)):
+            date_str = weight_history[i]['date'].strftime('%Y-%m-%d')
+            curr_w = weight_history[i]['weights']
+            f.write(f"=== {date_str} Rebalance ===\n")
+            
+            buys = []
+            sells = []
+            for etf in curr_w.keys():
+                w_old = prev_w.get(etf, 0.0)
+                w_new = curr_w[etf]
+                diff = w_new - w_old
+                # Log meaningful allocation changes (> 0.1% change)
+                if diff >= 0.001:
+                    buys.append((etf, diff, w_new))
+                elif diff <= -0.001:
+                    sells.append((etf, diff, w_new))
+            
+            # Sort by absolute diff descending
+            buys.sort(key=lambda x: x[1], reverse=True)
+            sells.sort(key=lambda x: x[1])
+            
+            for etf, diff, w_new in buys:
+                f.write(f"  BUY  {etf:<8} {diff:>+7.2%} (target: {w_new:>6.2%})\n")
+            for etf, diff, w_new in sells:
+                f.write(f"  SELL {etf:<8} {diff:>+7.2%} (target: {w_new:>6.2%})\n")
+            f.write("\n")
+            
+            prev_w = curr_w
+
 
 
 def load_benchmark(dates):
@@ -649,25 +713,25 @@ def main():
 
     # 3. Strategy 1: Equal weight baseline (static, no regime model)
     print("[3] Running Equal Weight strategy...")
-    equalw_nav, _, _ = run_backtest(prices_bt, market_data, ma60_arr,
+    equalw_nav, _, n_trades_eq, turn_eq = run_backtest(prices_bt, market_data, ma60_arr,
                                     base_weights_df=eq_weights_df, override_weights=equal_weights,
                                     trade_start_idx=trade_start_idx)
 
     # 4. Strategy 2: Equal Base + V2 Regime model
     print("[4] Running Equal Base + Regime strategy...")
-    regime_nav, regime_wh, n_trades_eq = run_backtest(prices_bt, market_data, ma60_arr,
+    regime_nav, regime_wh, _, turn_reg = run_backtest(prices_bt, market_data, ma60_arr,
                                                       base_weights_df=eq_weights_df,
                                                       trade_start_idx=trade_start_idx)
 
     # 5. Strategy 3: Dynamic Sharpe Weight baseline (no regime model, just dynamic base)
     print("[5] Running Dynamic Trailing Sharpe strategy...")
-    altw_nav, _, _ = run_backtest(prices_bt, market_data, ma60_arr,
+    altw_nav, _, _, turn_altw = run_backtest(prices_bt, market_data, ma60_arr,
                                   base_weights_df=alt_weights_df, use_regime=False,
                                   trade_start_idx=trade_start_idx)
 
     # 6. Strategy 4: Dynamic Base + V2 Regime model
     print("[6] Running Dynamic Base + Regime strategy...")
-    altw_regime_nav, altw_regime_wh, n_trades_alt = run_backtest(prices_bt, market_data, ma60_arr,
+    altw_regime_nav, altw_regime_wh, n_trades_alt, turn_alt = run_backtest(prices_bt, market_data, ma60_arr,
                                                                  base_weights_df=alt_weights_df,
                                                                  trade_start_idx=trade_start_idx)
 
@@ -680,7 +744,13 @@ def main():
 
     # 9. Print results
     print_results(equalw_nav, regime_nav, altw_nav, altw_regime_nav, bench_nav,
-                  regime_wh, altw_regime_wh, n_trades_eq, n_trades_alt, n_weak_days, len(equalw_nav))
+                  regime_wh, altw_regime_wh, n_trades_eq, n_trades_alt, n_weak_days, len(equalw_nav),
+                  turn_eq, turn_reg, turn_altw, turn_alt)
+
+    # 10. Save trades
+    trades_file = os.path.join(BASE_DIR, 'buy.txt')
+    save_trades(altw_regime_wh, trades_file)
+    print(f"Trades saved to: {trades_file}")
 
 
 
