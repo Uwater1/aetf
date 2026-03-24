@@ -5,6 +5,7 @@
 功能：每日定时运行、IV计算、自动调仓、全风控、微信推送
 """
 
+import os
 import numpy as np
 import pandas as pd
 import datetime
@@ -17,8 +18,8 @@ from xtquant.xttype import StockAccount
 from xtquant import xtconstant
 
 # ====================== 【必填配置】 ======================
-ACCOUNT_ID     = "你的资金账号"       # 填你的资金账号
-PUSHPLUS_TOKEN = "你的pushplus token" # 微信推送token
+ACCOUNT_ID     = os.getenv('QMT_ACCOUNT_ID')   # 资金账号，通过环境变量 QMT_ACCOUNT_ID 设置
+PUSHPLUS_TOKEN = os.getenv('PUSHPLUS_TOKEN')   # 微信推送token，通过环境变量 PUSHPLUS_TOKEN 设置
 # 策略参数
 RISK_FREE_RATE = 0.02
 LONG_TERM_DAYS = 90
@@ -197,7 +198,7 @@ def daily_task():
     print(content)
 
     # 检查账号
-    if ACCOUNT_ID == "你的资金账号":
+    if not ACCOUNT_ID:
         print("[提示] ACCOUNT_ID 未配置，跳过实盘调仓。")
         return
 
